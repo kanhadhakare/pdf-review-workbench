@@ -1,0 +1,7 @@
+<section class="dashboard" *ngIf="summary() as data">
+  <h1>Session Summary</h1>
+  <p>PDF: {{ data.job.originalFileName }}</p>
+  <p>Pages reviewed: {{ data.editSummary.pagesReviewed.length }} / {{ data.job.pageCount }}</p>
+  <p>Total edits: {{ data.editSummary.totalEdits }}</p>
+  <app-confidence-trend [points]="[]" />
+</section>

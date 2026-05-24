@@ -1,0 +1,15 @@
+{
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace=@pdf-review-workbench/api\" \"npm run start --workspace=@pdf-review-workbench/web\"",
+    "build": "npm run build --workspace=@pdf-review-workbench/shared && npm run build --workspace=@pdf-review-workbench/api && npm run build --workspace=@pdf-review-workbench/web",
+    "clean:jobs": "node -e \"require('fs').rmSync('storage/jobs',{recursive:true,force:true});require('fs').mkdirSync('storage/jobs',{recursive:true});\"",
+    "clean:fixes": "node -e \"require('fs').rmSync('storage/fixes',{recursive:true,force:true});require('fs').mkdirSync('storage/fixes',{recursive:true});\"",
+    "clean:models": "node -e \"require('fs').rmSync('storage/models',{recursive:true,force:true});require('fs').mkdirSync('storage/models',{recursive:true});\"",
+    "status": "node -e \"const f=require('fs');['jobs','fixes','profiles','models'].forEach(d=>{try{console.log(d+':',f.readdirSync('storage/'+d).length,'files')}catch(e){console.log(d+': missing')}})\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.0.0"
+  }
+}

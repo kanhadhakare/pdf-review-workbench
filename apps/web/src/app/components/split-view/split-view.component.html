@@ -1,0 +1,5 @@
+<div class="split" #container>
+  <section class="split__pane" [style.width]="leftWidth"><ng-content select="[leftPane]"></ng-content></section>
+  <button type="button" class="split__divider" (mousedown)="startDrag()" (dblclick)="reset()"></button>
+  <section class="split__pane" [style.width]="rightWidth"><ng-content select="[rightPane]"></ng-content></section>
+</div>

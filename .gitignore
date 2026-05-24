@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.angular/
+storage/uploads/*
+storage/jobs/*
+storage/fixes/*
+storage/models/*
+!storage/uploads/.gitkeep
+!storage/jobs/.gitkeep
+!storage/fixes/.gitkeep
+!storage/models/.gitkeep
+*.pkl
+*.pyc
+__pycache__/

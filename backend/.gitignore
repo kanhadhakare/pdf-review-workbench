@@ -1,0 +1,6 @@
+﻿node_modules/
+dist/
+storage/jobs/*
+storage/uploads/*
+!storage/jobs/.gitkeep
+!storage/uploads/.gitkeep

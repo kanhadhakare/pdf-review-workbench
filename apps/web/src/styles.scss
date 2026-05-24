@@ -1,0 +1,22 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+:root {
+  --bg: #0F1117;
+  --surface: #1A1D27;
+  --surface-2: #22263A;
+  --border: #2A2D3A;
+  --accent: #4A90E2;
+  --accent-dim: rgba(74, 144, 226, 0.2);
+  --success: #27AE60;
+  --warning: #F39C12;
+  --danger: #E74C3C;
+  --text: #E8EAF0;
+  --text-dim: #8890A4;
+  --font-mono: 'JetBrains Mono', monospace;
+  --font-body: 'IBM Plex Sans', sans-serif;
+  --radius: 2px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font-family: var(--font-body); }
+button, input, select, textarea { font: inherit; }
+button { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 2px; cursor: pointer; }
+a { color: var(--accent); }

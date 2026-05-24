@@ -1,0 +1,8 @@
+.page-nav { display: grid; gap: 4px; padding: 8px; max-height: 100vh; overflow: auto; background: var(--surface); border-right: 1px solid var(--border); }
+.page-nav__item { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px; }
+.page-nav__item.is-active { background: var(--accent-dim); }
+.page-nav__dot { width: 8px; height: 8px; border-radius: 50%; }
+.page-nav__dot.good { background: var(--success); }
+.page-nav__dot.warn { background: var(--warning); }
+.page-nav__dot.bad { background: var(--danger); }
+.page-nav__badge { min-width: 18px; text-align: center; font-size: 11px; background: var(--surface-2); }

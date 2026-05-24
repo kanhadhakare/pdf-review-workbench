@@ -1,0 +1,7 @@
+.review-page { min-height: 100vh; display: grid; grid-template-columns: 240px 1fr; }
+.review-page__main { display: grid; grid-template-rows: auto 1fr; min-height: 0; }
+.toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 12px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.pane { min-height: 100%; display: grid; }
+.surface { min-height: 0; overflow: auto; display: grid; place-items: center; padding: 12px; background: #08111c; }
+.fit-box { position: relative; }
+img { display: block; border: 0; background: white; transform-origin: top left; }

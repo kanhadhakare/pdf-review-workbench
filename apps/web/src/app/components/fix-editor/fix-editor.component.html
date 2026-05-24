@@ -1,0 +1,249 @@
+<section class="fix-editor" *ngIf="page as currentPage; else empty">
+  <div class="fix-editor__meta">
+    <span>Pending fixes: {{ pendingSummary().total }}</span>
+    <span *ngFor="let entry of pendingSummary().byType | keyvalue">{{ entry.key }} ×{{ entry.value }}</span>
+    <button type="button" (click)="submitFixes()" [disabled]="pendingSummary().total === 0 || saving()">Submit Fixes</button>
+    <button type="button" (click)="discardChanges()" [disabled]="pendingSummary().total === 0 || saving()">Discard</button>
+    <span class="fix-editor__status" *ngIf="statusMessage()">{{ statusMessage() }}</span>
+  </div>
+
+  <div class="fix-editor__canvas-shell">
+    <div
+      #canvas
+      class="fix-editor__canvas"
+      [style.width.px]="currentPage.pageWidth"
+      [style.height.px]="currentPage.pageHeight"
+      [style.transform]="transform()"
+      (click)="deselect($event)">
+      <img class="fix-editor__bg" [src]="currentPage.imageUrl" alt="">
+
+      <div
+        class="block-toolbar"
+        *ngIf="editMode && toolbarBlock() as toolbarBlock"
+        [style.left.px]="toolbarLeft()"
+        [style.top.px]="toolbarTop()"
+        (click)="$event.stopPropagation()">
+        <button type="button" [class.is-active]="selectedBlock()?.tag === 'h1'" (click)="changeTag('h1')">h1</button>
+        <button type="button" [class.is-active]="selectedBlock()?.tag === 'h2'" (click)="changeTag('h2')">h2</button>
+        <button type="button" [class.is-active]="selectedBlock()?.tag === 'h3'" (click)="changeTag('h3')">h3</button>
+        <button type="button" [class.is-active]="selectedBlock()?.tag === 'p'" (click)="changeTag('p')">p</button>
+        <button type="button" [class.is-active]="selectedBlock()?.tag === 'span'" (click)="changeTag('span')">span</button>
+        <button type="button" [class.is-active]="selectedBlock()?.tag === 'caption'" (click)="changeTag('caption')">caption</button>
+        <button type="button" (click)="changeTag('delete')">delete</button>
+        <button type="button" (click)="toggleStylePanel($event)">Style ▾</button>
+        <button type="button" *ngIf="selectedIds().length === 2" (click)="mergeSelected()">Merge</button>
+        <button type="button" (click)="deselect()">✕</button>
+      </div>
+
+      <div
+        class="style-panel"
+        *ngIf="editMode && showStylePanel() && selectedBlock() as block"
+        [style.left.px]="toolbarLeft()"
+        [style.top.px]="toolbarTop() + 42"
+        (click)="$event.stopPropagation()">
+        <label>
+          Text indent
+          <input type="number" [ngModel]="styleDraft().textIndent" (ngModelChange)="styleDraft.set({ ...styleDraft(), textIndent: +$event })">
+        </label>
+        <label>
+          Left padding
+          <input type="number" [ngModel]="styleDraft().paddingLeft" (ngModelChange)="styleDraft.set({ ...styleDraft(), paddingLeft: +$event })">
+        </label>
+        <label>
+          Line height
+          <input type="number" step="0.1" [ngModel]="styleDraft().lineHeight" (ngModelChange)="styleDraft.set({ ...styleDraft(), lineHeight: +$event })">
+        </label>
+        <label>
+          Text align
+          <select [ngModel]="styleDraft().textAlign" (ngModelChange)="styleDraft.set({ ...styleDraft(), textAlign: $event })">
+            <option value="left">Left</option>
+            <option value="right">Right</option>
+            <option value="center">Center</option>
+            <option value="justify">Justify</option>
+          </select>
+        </label>
+        <button type="button" (click)="applyStyleChanges()">Apply</button>
+        <p class="style-panel__hint" *ngIf="styleHint()">{{ styleHint() }}</p>
+      </div>
+
+      <ng-container *ngFor="let block of blocks(); trackBy: trackByBlock">
+        <ng-container [ngSwitch]="block.tag">
+          <h1
+            *ngSwitchCase="'h1'"
+            class="text-block"
+            [class.is-edit-mode]="editMode"
+            [class.is-selected]="isSelected(block.id)"
+            [class.is-editing]="editingTextId() === block.id"
+            [class.is-deleting]="isDeleting(block.id)"
+            [attr.data-editor-block-id]="block.id"
+            [style.left.px]="block.x"
+            [style.top.px]="block.y"
+            [style.width.px]="block.w"
+            [style.height.px]="block.h"
+            [style.fontSize.pt]="block.fontSize"
+            [style.fontFamily]="block.fontName + ', serif'"
+            [style.fontWeight]="block.fontWeight"
+            [style.textIndent.px]="block.styles.textIndent"
+            [style.paddingLeft.px]="block.styles.paddingLeft"
+            [style.lineHeight]="block.styles.lineHeight"
+            [style.textAlign]="block.styles.textAlign"
+            (click)="selectBlock(block.id, $event)"
+            (mousedown)="startMove(block.id, $event)"
+            (dblclick)="beginTextEdit(block.id, $event)">
+            <span
+              class="block-content"
+              [attr.contenteditable]="editMode && editingTextId() === block.id ? 'true' : null"
+              (blur)="finishTextEdit(block.id, $event)"
+              (keydown)="handleTextKeydown(block.id, $event)">{{ block.text }}</span>
+            <ng-container *ngTemplateOutlet="handles; context: { block: block }"></ng-container>
+          </h1>
+
+          <h2
+            *ngSwitchCase="'h2'"
+            class="text-block"
+            [class.is-edit-mode]="editMode"
+            [class.is-selected]="isSelected(block.id)"
+            [class.is-editing]="editingTextId() === block.id"
+            [class.is-deleting]="isDeleting(block.id)"
+            [attr.data-editor-block-id]="block.id"
+            [style.left.px]="block.x"
+            [style.top.px]="block.y"
+            [style.width.px]="block.w"
+            [style.height.px]="block.h"
+            [style.fontSize.pt]="block.fontSize"
+            [style.fontFamily]="block.fontName + ', serif'"
+            [style.fontWeight]="block.fontWeight"
+            [style.textIndent.px]="block.styles.textIndent"
+            [style.paddingLeft.px]="block.styles.paddingLeft"
+            [style.lineHeight]="block.styles.lineHeight"
+            [style.textAlign]="block.styles.textAlign"
+            (click)="selectBlock(block.id, $event)"
+            (mousedown)="startMove(block.id, $event)"
+            (dblclick)="beginTextEdit(block.id, $event)">
+            <span
+              class="block-content"
+              [attr.contenteditable]="editMode && editingTextId() === block.id ? 'true' : null"
+              (blur)="finishTextEdit(block.id, $event)"
+              (keydown)="handleTextKeydown(block.id, $event)">{{ block.text }}</span>
+            <ng-container *ngTemplateOutlet="handles; context: { block: block }"></ng-container>
+          </h2>
+
+          <h3
+            *ngSwitchCase="'h3'"
+            class="text-block"
+            [class.is-edit-mode]="editMode"
+            [class.is-selected]="isSelected(block.id)"
+            [class.is-editing]="editingTextId() === block.id"
+            [class.is-deleting]="isDeleting(block.id)"
+            [attr.data-editor-block-id]="block.id"
+            [style.left.px]="block.x"
+            [style.top.px]="block.y"
+            [style.width.px]="block.w"
+            [style.height.px]="block.h"
+            [style.fontSize.pt]="block.fontSize"
+            [style.fontFamily]="block.fontName + ', serif'"
+            [style.fontWeight]="block.fontWeight"
+            [style.textIndent.px]="block.styles.textIndent"
+            [style.paddingLeft.px]="block.styles.paddingLeft"
+            [style.lineHeight]="block.styles.lineHeight"
+            [style.textAlign]="block.styles.textAlign"
+            (click)="selectBlock(block.id, $event)"
+            (mousedown)="startMove(block.id, $event)"
+            (dblclick)="beginTextEdit(block.id, $event)">
+            <span
+              class="block-content"
+              [attr.contenteditable]="editMode && editingTextId() === block.id ? 'true' : null"
+              (blur)="finishTextEdit(block.id, $event)"
+              (keydown)="handleTextKeydown(block.id, $event)">{{ block.text }}</span>
+            <ng-container *ngTemplateOutlet="handles; context: { block: block }"></ng-container>
+          </h3>
+
+          <p
+            *ngSwitchCase="'p'"
+            class="text-block"
+            [class.is-edit-mode]="editMode"
+            [class.is-selected]="isSelected(block.id)"
+            [class.is-editing]="editingTextId() === block.id"
+            [class.is-deleting]="isDeleting(block.id)"
+            [attr.data-editor-block-id]="block.id"
+            [style.left.px]="block.x"
+            [style.top.px]="block.y"
+            [style.width.px]="block.w"
+            [style.height.px]="block.h"
+            [style.fontSize.pt]="block.fontSize"
+            [style.fontFamily]="block.fontName + ', serif'"
+            [style.fontWeight]="block.fontWeight"
+            [style.textIndent.px]="block.styles.textIndent"
+            [style.paddingLeft.px]="block.styles.paddingLeft"
+            [style.lineHeight]="block.styles.lineHeight"
+            [style.textAlign]="block.styles.textAlign"
+            (click)="selectBlock(block.id, $event)"
+            (mousedown)="startMove(block.id, $event)"
+            (dblclick)="beginTextEdit(block.id, $event)">
+            <span
+              class="block-content"
+              [attr.contenteditable]="editMode && editingTextId() === block.id ? 'true' : null"
+              (blur)="finishTextEdit(block.id, $event)"
+              (keydown)="handleTextKeydown(block.id, $event)">{{ block.text }}</span>
+            <ng-container *ngTemplateOutlet="handles; context: { block: block }"></ng-container>
+          </p>
+
+          <span
+            *ngSwitchDefault
+            class="text-block"
+            [class.is-edit-mode]="editMode"
+            [class.is-selected]="isSelected(block.id)"
+            [class.is-editing]="editingTextId() === block.id"
+            [class.is-deleting]="isDeleting(block.id)"
+            [attr.data-editor-block-id]="block.id"
+            [style.left.px]="block.x"
+            [style.top.px]="block.y"
+            [style.width.px]="block.w"
+            [style.height.px]="block.h"
+            [style.fontSize.pt]="block.fontSize"
+            [style.fontFamily]="block.fontName + ', serif'"
+            [style.fontWeight]="block.fontWeight"
+            [style.textIndent.px]="block.styles.textIndent"
+            [style.paddingLeft.px]="block.styles.paddingLeft"
+            [style.lineHeight]="block.styles.lineHeight"
+            [style.textAlign]="block.styles.textAlign"
+            (click)="selectBlock(block.id, $event)"
+            (mousedown)="startMove(block.id, $event)"
+            (dblclick)="beginTextEdit(block.id, $event)">
+            <span
+              class="block-content"
+              [attr.contenteditable]="editMode && editingTextId() === block.id ? 'true' : null"
+              (blur)="finishTextEdit(block.id, $event)"
+              (keydown)="handleTextKeydown(block.id, $event)">{{ block.text }}</span>
+            <ng-container *ngTemplateOutlet="handles; context: { block: block }"></ng-container>
+          </span>
+        </ng-container>
+      </ng-container>
+    </div>
+  </div>
+</section>
+
+<ng-template #handles let-block="block">
+  <div
+    *ngIf="editMode && isSelected(block.id)"
+    class="resize-handle resize-handle--tl"
+    (mousedown)="startResize(block.id, 'top-left', $event)"></div>
+  <div
+    *ngIf="editMode && isSelected(block.id)"
+    class="resize-handle resize-handle--tr"
+    (mousedown)="startResize(block.id, 'top-right', $event)"></div>
+  <div
+    *ngIf="editMode && isSelected(block.id)"
+    class="resize-handle resize-handle--bl"
+    (mousedown)="startResize(block.id, 'bottom-left', $event)"></div>
+  <div
+    *ngIf="editMode && isSelected(block.id)"
+    class="resize-handle resize-handle--br"
+    (mousedown)="startResize(block.id, 'bottom-right', $event)"></div>
+</ng-template>
+
+<ng-template #empty>
+  <section class="fix-editor fix-editor--empty">
+    <p>No page loaded.</p>
+  </section>
+</ng-template>
