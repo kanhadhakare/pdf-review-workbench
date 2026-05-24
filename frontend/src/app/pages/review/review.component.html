@@ -1,0 +1,75 @@
+<main class="review-page">
+  <aside class="review-page__nav">
+    <app-page-nav [pageCount]="pageCount()" [currentPageIndex]="pageIndex()" [confidenceMap]="confidenceMap()" [editCountMap]="editCountMap()" (pageSelected)="selectPage($event)" />
+  </aside>
+  <section class="review-page__main">
+    <header class="toolbar">
+      <a routerLink="/">Back</a>
+      <strong>Page {{ pageIndex() + 1 }} of {{ pageCount() }}</strong>
+      <span *ngIf="page()">Confidence: {{ page()!.confidence.toFixed(2) }}</span>
+      <span *ngIf="page()?.ocrValidation as ocr" [class]="'ocr-chip ocr-chip--' + ocr.status">
+        OCR {{ ocr.status }}
+        <ng-container *ngIf="ocr.score !== null">({{ ocr.score!.toFixed(2) }})</ng-container>
+      </span>
+      <span>Edits this page: {{ editCountMap()[pageIndex()] ?? 0 }}</span>
+      <span>Total session edits: {{ editSummary()?.totalEdits ?? 0 }}</span>
+      <span>Pending fixes: {{ pendingSummary().total }}</span>
+      <button type="button" (click)="viewMode.set('split')" [disabled]="viewMode() === 'split'">Split View</button>
+      <button type="button" (click)="viewMode.set('html-only')" [disabled]="viewMode() === 'html-only'">HTML Only</button>
+      <button type="button" (click)="editMode.set(!editMode())">{{ editMode() ? 'Exit Edit' : 'Edit' }}</button>
+      <button type="button" (click)="previousPage()" [disabled]="pageIndex() === 0">Previous</button>
+      <button type="button" (click)="nextPage()" [disabled]="pageIndex() >= pageCount() - 1">Next</button>
+    </header>
+    <app-split-view *ngIf="viewMode() === 'split'; else htmlOnlyView">
+      <div leftPane class="pane">
+        <div #imageViewport class="surface" *ngIf="page() as currentPage">
+          <div class="fit-box" [style.width.px]="scaledWidth()" [style.height.px]="scaledHeight()">
+            <img [src]="currentPage.imageUrl" [style.width.px]="currentPage.pageWidth" [style.height.px]="currentPage.pageHeight" [style.transform]="transform()">
+          </div>
+        </div>
+      </div>
+      <div rightPane class="pane">
+        <div #editorViewport class="surface" *ngIf="page() as currentPage">
+          <div class="fit-box" [style.width.px]="scaledWidth()" [style.height.px]="scaledHeight()">
+            <app-fix-editor
+              [jobId]="jobId()"
+              [page]="currentPage"
+              [editMode]="editMode()"
+              [scale]="pageScale()"
+              (pendingChanged)="updatePending($event)"
+              (fixesSaved)="handleFixesSaved($event)" />
+          </div>
+        </div>
+      </div>
+    </app-split-view>
+    <ng-template #htmlOnlyView>
+      <section class="single-view">
+        <div #editorViewport class="surface surface--single" *ngIf="page() as currentPage">
+          <div class="fit-box" [style.width.px]="scaledWidth()" [style.height.px]="scaledHeight()">
+            <app-fix-editor
+              [jobId]="jobId()"
+              [page]="currentPage"
+              [editMode]="editMode()"
+              [scale]="pageScale()"
+              (pendingChanged)="updatePending($event)"
+              (fixesSaved)="handleFixesSaved($event)" />
+          </div>
+        </div>
+      </section>
+    </ng-template>
+    <section class="ocr-panel" *ngIf="page()?.ocrValidation as ocr">
+      <strong>OCR validation</strong>
+      <p *ngIf="ocr.message">{{ ocr.message }}</p>
+      <p *ngIf="!ocr.message && ocr.status === 'ok'">PaddleOCR validation passed for this page.</p>
+      <ng-container *ngIf="ocrComparison() as comparison">
+        <span class="ocr-summary">Issues: {{ comparison.issues.length }} | Missing text: {{ comparison.missingTextCount }} | Position mismatches: {{ comparison.positionMismatchCount }}</span>
+        <ul *ngIf="comparison.issues.length">
+          <li *ngFor="let issue of comparison.issues.slice(0, 5)">
+            <strong>{{ issue.type }}</strong> — {{ issue.message }}
+          </li>
+        </ul>
+      </ng-container>
+    </section>
+    <p *ngIf="loading()">{{ loading() }}</p>
+  </section>
+</main>

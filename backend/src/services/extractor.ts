@@ -1,292 +1,43 @@
-import { ExtractionStatus, type TextBlock } from "../types.js";
-import fs from "fs-extra";
+﻿import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import pLimit from "p-limit";
-import type { InternalJob, JobStore, StoredPage } from "./jobStore.js";
-import { scoreTextBlocks } from "./validator.js";
+import { ExtractionStatus, type ClassifierResult, type ExtractionProfile, type PageResult, type RawSpan, type SemanticTag, type TextBlock } from "../types.js";
+import { classifyBlocks } from "./classifier.js";
+import { jobStore, type StoredJobState } from "./jobStore.js";
+import { compareOcrToBlocks } from "./ocrComparer.js";
+import { runPaddleOcr } from "./ocrService.js";
+import { applyOcrValidation, validatePage } from "./validator.js";
 
 type MuPdfModule = typeof import("mupdf");
 type PdfJsModule = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
 
-type HtmlMode = "final" | "debug" | "boxes";
-
-interface ExtractionContext {
-  job: InternalJob;
-  store: JobStore;
-  sourcePdfPath: string;
+interface ExtractorSpan extends RawSpan {
+  pageIndex: number;
+  fontWeight: "normal" | "bold";
 }
 
-interface ExtractedPage {
+interface PageExtraction {
   pageIndex: number;
-  width: number;
-  height: number;
-  blocks: TextBlock[];
+  pageWidth: number;
+  pageHeight: number;
+  leftMarginPx: number;
+  spans: ExtractorSpan[];
   imageBytes: Uint8Array;
 }
 
-interface StructuredLine {
-  bbox?: { x: number; y: number; w: number; h: number };
-  font?: { size?: number; name?: string };
-  text?: string;
-}
-
-interface StructuredBlock {
-  type?: string;
-  bbox?: { x: number; y: number; w: number; h: number };
-  lines?: StructuredLine[];
-}
-
 interface StructuredPageJson {
-  blocks?: StructuredBlock[];
+  blocks?: Array<{
+    type?: string;
+    bbox?: { x: number; y: number; w: number; h: number };
+    lines?: Array<{
+      bbox?: { x: number; y: number; w: number; h: number };
+      font?: { size?: number; name?: string };
+      text?: string;
+    }>;
+  }>;
 }
 
-interface FontAsset {
-  family: string;
-  sourceUrl: string;
-  format: string;
-  weight?: string;
-  style?: string;
-}
-
-function normalizeExtractedText(text: string): string {
-  let value = text
-    .replace(/Â»/g, "»")
-    .replace(/â€/g, "”")
-    .replace(/â€œ/g, "“")
-    .replace(/â€™/g, "’")
-    .replace(/â€“/g, "–")
-    .replace(/â€”/g, "—")
-    .replace(/ï¿½/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  if (/^(?:[A-Z0-9]\s+){2,}[A-Z0-9]$/.test(value)) {
-    value = value.replace(/\s+/g, "");
-  }
-
-  return value;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function chooseTag(block: TextBlock, thresholds: { h1: number; h2: number; p: number }): "h1" | "h2" | "p" | "span" {
-  if (block.fontSize >= thresholds.h1) {
-    return "h1";
-  }
-
-  if (block.fontSize >= thresholds.h2) {
-    return "h2";
-  }
-
-  if (block.fontSize >= thresholds.p) {
-    return "p";
-  }
-
-  return "span";
-}
-
-function toCssFontFamily(fontName: string): string {
-  const cleaned = fontName.replace(/[^\w\s-]/g, " ").replace(/\s+/g, " ").trim();
-  return cleaned || "PDFExtractedText";
-}
-
-function buildCss(width: number, height: number, fontAssets: FontAsset[], blocks: TextBlock[]): string {
-  const fontFaceCss = fontAssets.map((font) => {
-    const declarations = [
-      `font-family: "${font.family}";`,
-      `src: url("${font.sourceUrl}") format("${font.format}");`
-    ];
-
-    if (font.weight) {
-      declarations.push(`font-weight: ${font.weight};`);
-    }
-
-    if (font.style) {
-      declarations.push(`font-style: ${font.style};`);
-    }
-
-    return `@font-face {\n  ${declarations.join("\n  ")}\n}`;
-  }).join("\n\n");
-
-  const blockCss = blocks.map((block, index) => {
-    const left = block.x.toFixed(2);
-    const topValue = block.y.toFixed(2);
-    const widthValue = block.w.toFixed(2);
-    const heightValue = block.h.toFixed(2);
-    const fontSize = block.fontSize.toFixed(2);
-    const lineHeight = Math.max(block.h, block.fontSize * 1.1).toFixed(2);
-    const family = toCssFontFamily(block.fontName);
-    return `#text-block-${index + 1} {\n  position: absolute;\n  left: ${left}px;\n  top: ${topValue}px;\n  width: ${widthValue}px;\n  min-height: ${heightValue}px;\n  font-size: ${fontSize}pt;\n  line-height: ${lineHeight}px;\n  font-family: "${family}", "Times New Roman", Georgia, serif;\n}`;
-  }).join("\n\n");
-
-  return `${fontFaceCss ? `${fontFaceCss}\n\n` : ""}html, body {
-  margin: 0;
-  padding: 0;
-  background: #0a0f17;
-}
-
-.page {
-  position: relative;
-  width: ${width}px;
-  height: ${height}px;
-  margin: 0 auto;
-  background: white;
-  overflow: hidden;
-  user-select: text;
-  -webkit-user-select: text;
-}
-
-.page-bg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: fill;
-  pointer-events: none;
-  user-select: none;
-  -webkit-user-drag: none;
-}
-
-.text-layer {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-}
-
-.text-block {
-  margin: 0;
-  padding: 0;
-  white-space: pre-wrap;
-  letter-spacing: normal;
-  text-shadow: none;
-  font-weight: 400;
-  transform-origin: top left;
-  background: transparent;
-}
-
-${blockCss}
-`;
-}
-
-function buildHtml(pageIndex: number, imageUrl: string, cssUrl: string, blocks: TextBlock[], mode: HtmlMode): string {
-  const fontSizes = blocks.map((block) => block.fontSize).sort((a, b) => b - a);
-  const top = fontSizes[0] ?? 18;
-  const h1 = top;
-  const h2 = Math.max(top * 0.82, 14);
-  const p = Math.max(top * 0.62, 10);
-
-  const pageClass = mode === "boxes" ? "page mode-boxes" : mode === "debug" ? "page mode-debug" : "page mode-final";
-  const items = blocks.map((block, index) => {
-    const tag = chooseTag(block, { h1, h2, p });
-    return `<${tag} id="text-block-${index + 1}" class="text-block">${escapeHtml(block.text)}</${tag}>`;
-  }).join("\n");
-
-  const modeCss = mode === "final"
-    ? `.mode-final .text-block { color: rgba(0, 0, 0, 0.01); }`
-    : mode === "debug"
-      ? `.mode-debug .text-block { color: rgba(0, 0, 0, 0.85); background: rgba(255, 255, 255, 0.35); }`
-      : `.mode-boxes .text-block { color: rgba(0, 0, 0, 0.9); background: rgba(255, 255, 0, 0.16); outline: 1px dashed rgba(255, 0, 0, 0.9); }`;
-
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Page ${pageIndex + 1}</title>
-  <link rel="stylesheet" href="${cssUrl}">
-  <style>${modeCss}</style>
-</head>
-<body>
-  <div class="${pageClass}" id="page-${pageIndex + 1}">
-    <img class="page-bg" src="${imageUrl}" alt="">
-    <div class="text-layer">
-${items}
-    </div>
-  </div>
-</body>
-</html>`;
-}
-
-function mergeFragments(blocks: TextBlock[]): TextBlock[] {
-  const sorted = [...blocks].sort((a, b) => {
-    if (Math.abs(a.y - b.y) > 3) {
-      return a.y - b.y;
-    }
-
-    return a.x - b.x;
-  });
-
-  const merged: TextBlock[] = [];
-
-  for (const block of sorted) {
-    const previous = merged[merged.length - 1];
-
-    if (!previous) {
-      merged.push({ ...block });
-      continue;
-    }
-
-    const sameBand = Math.abs(previous.y - block.y) <= 3;
-    const gap = block.x - (previous.x + previous.w);
-    const compatibleFont = Math.abs(previous.fontSize - block.fontSize) <= 1 && previous.fontName === block.fontName;
-
-    if (sameBand && compatibleFont && gap >= -1 && gap <= 12) {
-      const compactPrevious = previous.text.replace(/\s+/g, "");
-      const compactCurrent = block.text.replace(/\s+/g, "");
-      const previousLooksLikeLetters = compactPrevious.length <= 3 || /^[A-Z0-9]+$/.test(compactPrevious);
-      const currentLooksLikeLetters = compactCurrent.length <= 3 || /^[A-Z0-9]+$/.test(compactCurrent);
-      const shouldInsertSpace = gap > 3 && !(previousLooksLikeLetters && currentLooksLikeLetters);
-
-      previous.text = `${previous.text}${shouldInsertSpace ? " " : ""}${block.text}`;
-      previous.w = Math.max(previous.w, (block.x + block.w) - previous.x);
-      previous.h = Math.max(previous.h, block.h);
-      previous.confidence = Math.min(previous.confidence, block.confidence);
-      continue;
-    }
-
-    merged.push({ ...block });
-  }
-
-  return merged;
-}
-
-function normalizeMuPdfBlocks(data: StructuredPageJson, pageHeight: number): TextBlock[] {
-  const raw: TextBlock[] = [];
-
-  for (const block of data.blocks ?? []) {
-    if (block.type !== "text") {
-      continue;
-    }
-
-    for (const line of block.lines ?? []) {
-      const text = normalizeExtractedText(line.text ?? "");
-      const bbox = line.bbox ?? block.bbox;
-      if (!text || !bbox) {
-        continue;
-      }
-
-      const fontSize = line.font?.size ?? bbox.h ?? 12;
-      raw.push({
-        x: bbox.x,
-        y: bbox.y,
-        w: bbox.w,
-        h: bbox.h,
-        text,
-        fontSize,
-        fontName: line.font?.name ?? "Unknown",
-        confidence: 0.9
-      });
-    }
-  }
-
-  return mergeFragments(raw);
-}
+let activeEngine = "uninitialized";
 
 async function importMuPdf(): Promise<MuPdfModule | null> {
   try {
@@ -300,188 +51,327 @@ async function importPdfJs(): Promise<PdfJsModule> {
   return import("pdfjs-dist/legacy/build/pdf.mjs");
 }
 
-async function extractWithMuPdf(sourcePdfPath: string): Promise<ExtractedPage[]> {
-  const mupdfjs = await importMuPdf();
-  if (!mupdfjs) {
-    throw new Error("MuPDF.js is not available");
+function normalizeText(text: string, profile: ExtractionProfile): string {
+  let value = text
+    .replace(/Ã‚Â»/g, "»")
+    .replace(/Ã¢â‚¬Â/g, "”")
+    .replace(/Ã¢â‚¬Å“/g, "“")
+    .replace(/Ã¢â‚¬â„¢/g, "’")
+    .replace(/Ã¢â‚¬â€œ/g, "–")
+    .replace(/Ã¢â‚¬â€/g, "—")
+    .replace(/Ã¯Â¿Â½/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  for (const [source, target] of Object.entries(profile.encodingMap)) {
+    value = value.split(source).join(target);
   }
+  if (/^(?:[A-Z0-9]\s+){2,}[A-Z0-9]$/.test(value)) {
+    value = value.replace(/\s+/g, "");
+  }
+  return value;
+}
 
-  const fileData = await fs.readFile(sourcePdfPath);
-  const document = mupdfjs.Document.openDocument(fileData, "application/pdf");
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function sanitizeFont(fontName: string): string {
+  const cleaned = fontName.replace(/[^A-Za-z0-9_\s-]/g, " ").replace(/\s+/g, " ").trim();
+  return cleaned || "serif";
+}
+
+function detectLeftMarginPx(spans: ExtractorSpan[]): number {
+  const buckets = new Map<number, number>();
+  for (const span of spans) {
+    const bucket = Math.round(span.x / 4) * 4;
+    buckets.set(bucket, (buckets.get(bucket) ?? 0) + 1);
+  }
+  const best = [...buckets.entries()].sort((a, b) => b[1] - a[1])[0];
+  return best?.[0] ?? 0;
+}
+
+function defaultStyles(indent = 0) {
+  return { textIndent: indent, paddingLeft: 0, lineHeight: 1.4, textAlign: "left" as const };
+}
+
+function mergeSpans(spans: ExtractorSpan[], profile: ExtractionProfile, leftMarginPx: number): TextBlock[] {
+  const sorted = [...spans].sort((a, b) => (Math.abs(a.y - b.y) > profile.yBandTolerance ? a.y - b.y : a.x - b.x));
+  const blocks: TextBlock[] = [];
+  for (const span of sorted) {
+    const normalized = normalizeText(span.text, profile);
+    if (!normalized) continue;
+    const indentOffset = span.x - leftMarginPx;
+    const potentialIndent = span.x > leftMarginPx + (profile.indentedParaXOffset || 10);
+    const confirmedIndent = profile.firstLineIndentPx > 0 && Math.abs(indentOffset - profile.firstLineIndentPx) < 3;
+    const isIndented = potentialIndent || confirmedIndent;
+    const previous = blocks[blocks.length - 1];
+    if (previous) {
+      const prevLastRaw = previous.rawSpans[previous.rawSpans.length - 1];
+      const gap = span.x - (previous.x + previous.w);
+      const fontCompatible = Math.abs(previous.fontSize - span.fontSize) <= 1 && previous.fontName === span.fontName;
+      const shouldMerge = Math.abs(prevLastRaw.y - span.y) <= profile.yBandTolerance && fontCompatible && gap <= profile.xGapTolerance && gap >= -1;
+      const indentGuard = isIndented && previous.y < span.y && Math.abs(previous.x - span.x) > 2;
+      if (shouldMerge && !indentGuard) {
+        const lettersOnly = /^[A-Z0-9]+$/.test(previous.text.replace(/\s+/g, "")) && /^[A-Z0-9]+$/.test(normalized.replace(/\s+/g, ""));
+        previous.text = `${previous.text}${gap > 3 && !lettersOnly ? " " : ""}${normalized}`;
+        previous.w = Math.max(previous.w, (span.x + span.w) - previous.x);
+        previous.h = Math.max(previous.h, span.h);
+        previous.rawSpans.push({ x: span.x, y: span.y, w: span.w, h: span.h, text: normalized, fontSize: span.fontSize, fontName: span.fontName });
+        continue;
+      }
+    }
+    const textIndent = isIndented ? (profile.firstLineIndentPx || indentOffset) : 0;
+    blocks.push({
+      id: randomUUID(),
+      x: Number(span.x.toFixed(2)),
+      y: Number((span.y + profile.baselineDrift).toFixed(2)),
+      w: Number(span.w.toFixed(2)),
+      h: Number(span.h.toFixed(2)),
+      text: normalized,
+      fontSize: Number(span.fontSize.toFixed(2)),
+      fontName: span.fontName,
+      fontWeight: span.fontWeight,
+      confidence: 0.8,
+      tag: "span",
+      pageIndex: span.pageIndex,
+      styles: defaultStyles(textIndent),
+      isFirstLineIndented: isIndented,
+      rawSpans: [{ x: span.x, y: span.y, w: span.w, h: span.h, text: normalized, fontSize: span.fontSize, fontName: span.fontName }]
+    });
+  }
+  return blocks;
+}
+
+function predictTag(block: TextBlock, pageWidth: number, profile: ExtractionProfile): SemanticTag {
+  if (block.confidence < profile.artifactThreshold) return "artifact";
+  if (block.isFirstLineIndented) return "p";
+  if (block.fontSize >= profile.headingCutoffs[0]) return "h1";
+  if (block.fontSize >= profile.headingCutoffs[1]) return "h2";
+  if (block.fontSize >= profile.headingCutoffs[2]) return "h3";
+  return block.w > pageWidth * 0.5 ? "p" : "span";
+}
+
+function applyClassifierResults(blocks: TextBlock[], results: ClassifierResult[], pageWidth: number, profile: ExtractionProfile): TextBlock[] {
+  const byId = new Map(results.map((result) => [result.blockId, result]));
+  return blocks.map((block) => {
+    const result = byId.get(block.id);
+    return {
+      ...block,
+      tag: result?.predictedTag ?? predictTag(block, pageWidth, profile),
+      confidence: Number((result?.confidence ?? block.confidence).toFixed(3))
+    };
+  });
+}
+
+function applyParagraphStyles(blocks: TextBlock[], profile: ExtractionProfile, leftMarginPx: number): TextBlock[] {
+  return blocks.map((block) => {
+    if (block.tag !== "p") return block;
+    const shouldApply = profile.defaultTextIndent > 0 && !block.isFirstLineIndented && Math.abs(block.x - leftMarginPx) < 8;
+    return {
+      ...block,
+      styles: {
+        ...block.styles,
+        textIndent: shouldApply ? profile.defaultTextIndent : block.styles.textIndent
+      }
+    };
+  });
+}
+
+function filterBlocks(blocks: TextBlock[]): TextBlock[] {
+  return blocks.filter((block) => block.tag !== "artifact" && block.text.trim() && block.w >= 2 && block.h >= 2);
+}
+
+function buildCss(pageWidth: number, pageHeight: number, blocks: TextBlock[]): string {
+  const rules = blocks.map((block) => `[data-block-id="${block.id}"] {\n  position: absolute;\n  left: ${block.x}px;\n  top: ${block.y}px;\n  width: ${block.w}px;\n  height: ${block.h}px;\n  font-size: ${block.fontSize}pt;\n  font-family: "${sanitizeFont(block.fontName)}", serif;\n  font-weight: ${block.fontWeight};\n  white-space: nowrap;\n  overflow: visible;\n  text-indent: ${block.styles.textIndent}px;\n  padding-left: ${block.styles.paddingLeft}px;\n  line-height: ${block.styles.lineHeight};\n  text-align: ${block.styles.textAlign};\n}`).join("\n\n");
+  return `html, body { margin: 0; padding: 0; background: transparent; }\n.page { position: relative; width: ${pageWidth}px; height: ${pageHeight}px; overflow: hidden; }\n.page__bg { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }\n.page__text { position: absolute; inset: 0; z-index: 1; }\n.page__text > * { margin: 0; user-select: text; }\n${rules}`;
+}
+
+function buildHtml(page: PageResult, imageHref: string, cssHref: string, mode: "final" | "review" | "boxes"): string {
+  const modeCss = mode === "final"
+    ? `.page__text > * { color: rgba(0, 0, 0, 0.01); }`
+    : mode === "review"
+      ? `.page__text > * { color: rgba(0, 0, 0, 0.88); background: rgba(255, 255, 255, 0.2); }`
+      : `.page__text > * { color: rgba(0, 0, 0, 0.88); background: rgba(255, 255, 0, 0.14); outline: 1px dashed rgba(74, 144, 226, 0.95); }`;
+  const elements = page.blocks.map((block) => `<${block.tag} data-block-id="${block.id}" data-confidence="${block.confidence}" data-tag="${block.tag}" data-is-indented="${block.isFirstLineIndented}">${escapeHtml(block.text)}</${block.tag}>`).join("\n");
+  return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<link rel="stylesheet" href="${cssHref}">\n<style>${modeCss}</style>\n</head>\n<body>\n<div class="page">\n<img class="page__bg" src="${imageHref}" alt="">\n<div class="page__text">\n${elements}\n</div>\n</div>\n</body>\n</html>`;
+}
+
+async function extractWithMuPdf(filePath: string, profile: ExtractionProfile, dpi: number): Promise<PageExtraction[]> {
+  const mupdf = await importMuPdf();
+  if (!mupdf) throw new Error("MuPDF unavailable");
+  activeEngine = "mupdf";
+  const pdfBytes = await readFile(filePath);
+  const document = mupdf.Document.openDocument(pdfBytes, "application/pdf");
   const pageCount = document.countPages();
-  const scale = 2;
-  const matrix = mupdfjs.Matrix.scale(scale, scale);
-
-  const limit = pLimit(6);
-  const work = Array.from({ length: pageCount }, (_, pageIndex) => limit(async () => {
+  const scale = Math.min(200, Math.max(72, dpi)) / 72;
+  const matrix = mupdf.Matrix.scale(scale, scale);
+  const limit = pLimit(4);
+  return Promise.all(Array.from({ length: pageCount }, (_, pageIndex) => limit(async () => {
     const page = document.loadPage(pageIndex);
     const bounds = page.getBounds() as [number, number, number, number];
-    const width = Math.round((bounds[2] - bounds[0]) * scale);
-    const height = Math.round((bounds[3] - bounds[1]) * scale);
-    const pixmap = page.toPixmap(matrix, mupdfjs.ColorSpace.DeviceRGB, false, true);
+    const pageWidth = Math.round((bounds[2] - bounds[0]) * scale);
+    const pageHeight = Math.round((bounds[3] - bounds[1]) * scale);
+    const pixmap = page.toPixmap(matrix, mupdf.ColorSpace.DeviceRGB, false, true);
     const imageBytes = pixmap.asPNG();
     const structured = page.toStructuredText("preserve-whitespace,preserve-spans");
     const json = JSON.parse(structured.asJSON(scale)) as StructuredPageJson;
-    const blocks = normalizeMuPdfBlocks(json, height);
-
-    return {
-      pageIndex,
-      width,
-      height,
-      blocks,
-      imageBytes
-    } satisfies ExtractedPage;
-  }));
-
-  return Promise.all(work);
-}
-
-interface PdfJsTextItem {
-  str: string;
-  width: number;
-  height: number;
-  transform: number[];
-  fontName: string;
-}
-
-function normalizePdfJsBlocks(items: PdfJsTextItem[], pageHeight: number, scale: number): TextBlock[] {
-  const raw = items
-    .map((item) => {
-      const text = normalizeExtractedText(item.str);
-      if (!text) {
-        return null;
+    const spans: ExtractorSpan[] = [];
+    for (const block of json.blocks ?? []) {
+      if (block.type !== "text") continue;
+      for (const line of block.lines ?? []) {
+        const bbox = line.bbox ?? block.bbox;
+        const text = normalizeText(line.text ?? "", profile);
+        if (!bbox || !text) continue;
+        const fontName = line.font?.name ?? "Unknown";
+        spans.push({
+          x: bbox.x + profile.coordOffsetX,
+          y: bbox.y + profile.coordOffsetY,
+          w: bbox.w,
+          h: bbox.h,
+          text,
+          fontSize: line.font?.size ?? bbox.h ?? 12,
+          fontName,
+          pageIndex,
+          fontWeight: /bold|black|heavy/i.test(fontName) ? "bold" : "normal"
+        });
       }
-
-      const [, , , d, e, f] = item.transform;
-      const fontSize = Math.abs(d) || item.height || 12;
-      const width = item.width * scale;
-      const height = (item.height || fontSize) * scale;
-      return {
-        x: e * scale,
-        y: (pageHeight - (f * scale)) - height,
-        w: width,
-        h: height,
-        text,
-        fontSize: fontSize * scale,
-        fontName: item.fontName,
-        confidence: 0.72
-      } satisfies TextBlock;
-    })
-    .filter((block): block is TextBlock => block !== null);
-
-  return mergeFragments(raw);
+    }
+    return { pageIndex, pageWidth, pageHeight, leftMarginPx: detectLeftMarginPx(spans), spans, imageBytes };
+  })));
 }
 
-async function extractWithPdfJs(sourcePdfPath: string): Promise<ExtractedPage[]> {
+async function extractWithPdfJs(filePath: string, profile: ExtractionProfile, dpi: number): Promise<PageExtraction[]> {
   const pdfjs = await importPdfJs();
   const canvasModule = await import("@napi-rs/canvas");
-  const loadingTask = pdfjs.getDocument({
-    data: new Uint8Array(await fs.readFile(sourcePdfPath)),
-    useWorkerFetch: false
-  } as any);
-  const document = await loadingTask.promise;
-  const pageCount = document.numPages;
-  const scale = 2;
-  const limit = pLimit(6);
-
-  const work = Array.from({ length: pageCount }, (_, index) => limit(async () => {
-    const page = await document.getPage(index + 1);
+  activeEngine = "pdfjs-dist";
+  const task = pdfjs.getDocument({ data: new Uint8Array(await readFile(filePath)), useWorkerFetch: false } as never);
+  const document = await task.promise;
+  const scale = Math.min(200, Math.max(72, dpi)) / 72;
+  const limit = pLimit(4);
+  return Promise.all(Array.from({ length: document.numPages }, (_, zeroIndex) => limit(async () => {
+    const page = await document.getPage(zeroIndex + 1);
     const viewport = page.getViewport({ scale });
     const canvas = canvasModule.createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
     const context = canvas.getContext("2d");
-
-    await page.render({
-      canvas,
-      canvasContext: context as never,
-      viewport
-    } as any).promise;
-
-    const textContent = await page.getTextContent();
-    const blocks = normalizePdfJsBlocks(textContent.items as PdfJsTextItem[], viewport.height, scale);
-
+    await page.render({ canvas, canvasContext: context as never, viewport } as never).promise;
+    const text = await page.getTextContent();
+    const spans: ExtractorSpan[] = [];
+    for (const item of text.items as Array<{ str: string; width: number; height: number; transform: number[]; fontName: string }>) {
+      const normalized = normalizeText(item.str, profile);
+      if (!normalized) continue;
+      const [, , , d, e, f] = item.transform;
+      const height = (item.height || Math.abs(d) || 12) * scale;
+      spans.push({
+        x: (e * scale) + profile.coordOffsetX,
+        y: (viewport.height - (f * scale) - height) + profile.coordOffsetY,
+        w: item.width * scale,
+        h: height,
+        text: normalized,
+        fontSize: Math.abs(d) || item.height || 12,
+        fontName: item.fontName,
+        pageIndex: zeroIndex,
+        fontWeight: /bold|black|heavy/i.test(item.fontName) ? "bold" : "normal"
+      });
+    }
     return {
-      pageIndex: index,
-      width: Math.ceil(viewport.width),
-      height: Math.ceil(viewport.height),
-      blocks,
+      pageIndex: zeroIndex,
+      pageWidth: Math.ceil(viewport.width),
+      pageHeight: Math.ceil(viewport.height),
+      leftMarginPx: detectLeftMarginPx(spans),
+      spans,
       imageBytes: new Uint8Array(canvas.toBuffer("image/png"))
-    } satisfies ExtractedPage;
-  }));
-
-  return Promise.all(work);
+    };
+  })));
 }
 
-async function extractPages(sourcePdfPath: string): Promise<ExtractedPage[]> {
+async function extractPages(filePath: string, profile: ExtractionProfile, dpi: number): Promise<PageExtraction[]> {
   try {
-    return await extractWithMuPdf(sourcePdfPath);
+    return await extractWithMuPdf(filePath, profile, dpi);
   } catch {
-    return extractWithPdfJs(sourcePdfPath);
+    return extractWithPdfJs(filePath, profile, dpi);
   }
 }
 
-function toStoredPage(jobId: string, page: ExtractedPage): StoredPage {
-  const confidence = scoreTextBlocks(page.blocks);
-  const imageUrl = `/api/jobs/${jobId}/pages/${page.pageIndex}/image`;
-  const cssUrl = `/files/${jobId}/styles/page-${page.pageIndex + 1}.css`;
-  const relativeImageUrl = `../images/page-${page.pageIndex + 1}.png`;
-  const relativeCssUrl = `../styles/page-${page.pageIndex + 1}.css`;
-  const fontAssets: FontAsset[] = [];
-  const cssContent = buildCss(page.width, page.height, fontAssets, page.blocks);
-  const htmlContent = buildHtml(page.pageIndex, imageUrl, cssUrl, page.blocks, "final");
-  const debugHtmlContent = buildHtml(page.pageIndex, imageUrl, cssUrl, page.blocks, "debug");
-  const boxesHtmlContent = buildHtml(page.pageIndex, imageUrl, cssUrl, page.blocks, "boxes");
-  const fileHtmlContent = buildHtml(page.pageIndex, relativeImageUrl, relativeCssUrl, page.blocks, "final");
-
-  return {
-    pageIndex: page.pageIndex,
-    imageUrl,
-    htmlContent,
-    cssUrl,
-    confidence,
-    width: page.width,
-    height: page.height,
-    debugHtmlContent,
-    boxesHtmlContent,
-    fileHtmlContent,
-    cssContent,
-    blocks: page.blocks.map((block) => ({
-      ...block,
-      confidence: Number(((block.confidence + confidence) / 2).toFixed(3))
-    }))
+function buildPageArtifacts(jobId: string, extracted: PageExtraction, profile: ExtractionProfile, blocks: TextBlock[]) {
+  const filtered = filterBlocks(applyParagraphStyles(blocks, profile, extracted.leftMarginPx));
+  const page: PageResult = {
+    pageIndex: extracted.pageIndex,
+    imageUrl: `/api/jobs/${jobId}/pages/${extracted.pageIndex}/image`,
+    htmlContent: "",
+    blocks: filtered,
+    confidence: validatePage(filtered, profile, extracted.pageWidth, extracted.pageHeight),
+    pageWidth: extracted.pageWidth,
+    pageHeight: extracted.pageHeight,
+    leftMarginPx: extracted.leftMarginPx,
+    reviewStatus: "unvisited"
   };
+  const pageNumber = extracted.pageIndex + 1;
+  const cssContent = buildCss(extracted.pageWidth, extracted.pageHeight, filtered);
+  const finalHtml = buildHtml(page, `../images/page-${pageNumber}.png`, `../styles/page-${pageNumber}.css`, "final");
+  const reviewHtml = buildHtml(page, `../images/page-${pageNumber}.png`, `../styles/page-${pageNumber}.css`, "review");
+  const boxesHtml = buildHtml(page, `../images/page-${pageNumber}.png`, `../styles/page-${pageNumber}.css`, "boxes");
+  page.htmlContent = finalHtml;
+  return { page, cssContent, finalHtml, reviewHtml, boxesHtml };
 }
 
-export async function runExtraction(context: ExtractionContext): Promise<void> {
-  const { job, store, sourcePdfPath } = context;
-
-  await store.update(job.id, {
-    status: ExtractionStatus.processing,
-    processedPages: 0,
-    errorMessage: undefined
-  });
-
+export async function extractPDF(job: StoredJobState, profile: ExtractionProfile, dpi = 150): Promise<void> {
+  await jobStore.markActive(job.id);
+  await jobStore.updateJob(job.id, { status: ExtractionStatus.processing, processedPages: 0, dpi });
   try {
-    const pages = await extractPages(sourcePdfPath);
-    await store.update(job.id, { pageCount: pages.length });
+    const pages = await extractPages(job.filePath, profile, dpi);
+    await jobStore.updateJob(job.id, { pageCount: pages.length });
+    for (const extracted of pages.sort((a, b) => a.pageIndex - b.pageIndex)) {
+      const merged = mergeSpans(extracted.spans, profile, extracted.leftMarginPx);
+      const classified = applyClassifierResults(
+        merged,
+        await classifyBlocks(merged, { pageWidth: extracted.pageWidth, pageHeight: extracted.pageHeight } as PageResult),
+        extracted.pageWidth,
+        profile
+      );
+      const built = buildPageArtifacts(job.id, extracted, profile, classified);
+      await jobStore.savePageArtifacts(
+        job.id,
+        extracted.pageIndex,
+        {
+          page: built.page,
+          cssContent: built.cssContent,
+          finalHtmlContent: built.finalHtml,
+          reviewHtmlContent: built.reviewHtml,
+          boxesHtmlContent: built.boxesHtml
+        },
+        extracted.imageBytes
+      );
 
-    for (const page of pages.sort((a, b) => a.pageIndex - b.pageIndex)) {
-      const imagePath = store.getPageImagePath(job.id, page.pageIndex);
-      await fs.writeFile(imagePath, page.imageBytes);
-      const storedPage = toStoredPage(job.id, page);
-      await store.savePage(job.id, storedPage);
-      await store.incrementProcessed(job.id);
+      const ocrPage = await runPaddleOcr(jobStore.getImagePath(job.id, extracted.pageIndex), extracted.pageIndex, extracted.pageWidth, extracted.pageHeight);
+      const ocrComparison = compareOcrToBlocks(extracted.pageIndex, built.page.blocks, ocrPage);
+      const ocrValidation = applyOcrValidation(built.page.confidence, ocrPage, ocrComparison);
+      built.page.confidence = ocrValidation.confidence;
+      built.page.ocrValidation = ocrValidation.summary;
+
+      await jobStore.updatePage(job.id, extracted.pageIndex, {
+        confidence: built.page.confidence,
+        ocrValidation: built.page.ocrValidation
+      });
+      await jobStore.saveOcrArtifacts(job.id, extracted.pageIndex, ocrPage, ocrComparison);
+      await jobStore.updateJob(job.id, { processedPages: extracted.pageIndex + 1 });
     }
-
-    await store.update(job.id, {
-      status: ExtractionStatus.done,
-      pageCount: pages.length
-    });
+    await jobStore.updateJob(job.id, { status: ExtractionStatus.done, pageCount: pages.length });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown extraction failure";
-    await store.update(job.id, {
+    await jobStore.updateJob(job.id, {
       status: ExtractionStatus.failed,
-      errorMessage: message
+      errorMessage: error instanceof Error ? error.message : "Extraction failed"
     });
     throw error;
+  } finally {
+    await jobStore.markInactive(job.id);
   }
+}
+
+export function getActiveEngine(): string {
+  return activeEngine;
 }

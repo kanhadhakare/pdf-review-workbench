@@ -1,159 +1,201 @@
-﻿import { ExtractionStatus, type ExtractionJob, type PageResult, type TextBlock } from "../types.js";
-import fs from "fs-extra";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { type ExtractionJob, type JobEditSummary, type OcrComparisonResult, type OcrPageResult, type PageResult } from "../types.js";
 
-export interface InternalJob extends ExtractionJob {
-  processedPages: number;
-  sourcePath?: string;
-  sourceFileName?: string;
-  errorMessage?: string;
+const STORAGE_ROOT = path.resolve("E:/pdf-review-workbench/storage");
+const JOBS_ROOT = path.join(STORAGE_ROOT, "jobs");
+
+export interface StoredPageArtifacts {
+  page: PageResult;
+  reviewHtmlContent: string;
+  boxesHtmlContent: string;
+  finalHtmlContent: string;
+  cssContent: string;
 }
 
-export interface StoredPage extends PageResult {
-  width: number;
-  height: number;
-  blocks: TextBlock[];
-  cssContent?: string;
-  fileHtmlContent?: string;
+export interface StoredJobState extends ExtractionJob {
+  processedPages: number;
+  errorMessage?: string;
+  warning?: "large_file";
+}
+
+const EMPTY_EDIT_SUMMARY = (jobId: string): JobEditSummary => ({
+  jobId,
+  totalEdits: 0,
+  editsByPage: {},
+  editsByType: {
+    move: 0,
+    resize: 0,
+    "text-correct": 0,
+    "tag-change": 0,
+    merge: 0,
+    delete: 0,
+    "style-change": 0,
+    split: 0
+  },
+  pagesReviewed: [],
+  pagesEdited: [],
+  pagesAccurate: [],
+  sessionsCount: 0,
+  lastEditAt: null
+});
+
+async function ensureDir(dirPath: string): Promise<void> {
+  await mkdir(dirPath, { recursive: true });
+}
+
+async function readJson<T>(filePath: string): Promise<T | null> {
+  try {
+    const content = await readFile(filePath, "utf8");
+    return JSON.parse(content) as T;
+  } catch {
+    return null;
+  }
+}
+
+async function writeJson(filePath: string, value: unknown): Promise<void> {
+  await ensureDir(path.dirname(filePath));
+  await writeFile(filePath, JSON.stringify(value, null, 2), "utf8");
 }
 
 export class JobStore {
-  private readonly jobs = new Map<string, InternalJob>();
+  private readonly activeJobs = new Set<string>();
 
-  constructor(private readonly jobsRoot: string) {}
-
-  async ensureJob(job: InternalJob): Promise<void> {
-    this.jobs.set(job.id, job);
-    await fs.ensureDir(this.getJobDirectory(job.id));
-    await fs.ensureDir(this.getPageDirectory(job.id));
-    await fs.ensureDir(this.getImageDirectory(job.id));
-    await fs.ensureDir(this.getStyleDirectory(job.id));
-    await fs.ensureDir(this.getFontDirectory(job.id));
-    await this.writeMeta(job);
+  get storageRoot(): string {
+    return STORAGE_ROOT;
   }
 
-  async create(job: InternalJob): Promise<InternalJob> {
-    await this.ensureJob(job);
+  get jobsRoot(): string {
+    return JOBS_ROOT;
+  }
+
+  async create(job: StoredJobState): Promise<StoredJobState> {
+    const dir = this.getJobDir(job.id);
+    await Promise.all([
+      ensureDir(dir),
+      ensureDir(this.getImagesDir(job.id)),
+      ensureDir(this.getPagesDir(job.id)),
+      ensureDir(this.getReviewDir(job.id)),
+      ensureDir(this.getFinalDir(job.id)),
+      ensureDir(this.getStylesDir(job.id)),
+      ensureDir(this.getFontsDir(job.id)),
+      ensureDir(this.getOcrDir(job.id))
+    ]);
+    await this.saveJob(job);
     return job;
   }
 
-  getJobDirectory(jobId: string): string {
-    return path.join(this.jobsRoot, jobId);
+  async saveJob(job: StoredJobState): Promise<void> {
+    await writeJson(this.getMetaPath(job.id), job);
   }
 
-  getImageDirectory(jobId: string): string {
-    return path.join(this.getJobDirectory(jobId), "images");
+  async getJob(jobId: string): Promise<StoredJobState | null> {
+    return readJson<StoredJobState>(this.getMetaPath(jobId));
   }
 
-  getPageDirectory(jobId: string): string {
-    return path.join(this.getJobDirectory(jobId), "pages");
-  }
-
-  getStyleDirectory(jobId: string): string {
-    return path.join(this.getJobDirectory(jobId), "styles");
-  }
-
-  getFontDirectory(jobId: string): string {
-    return path.join(this.getJobDirectory(jobId), "fonts");
-  }
-
-  getSourcePdfPath(jobId: string): string {
-    return path.join(this.getJobDirectory(jobId), "source.pdf");
-  }
-
-  getMetaPath(jobId: string): string {
-    return path.join(this.getJobDirectory(jobId), "meta.json");
-  }
-
-  getPageJsonPath(jobId: string, pageIndex: number): string {
-    return path.join(this.getPageDirectory(jobId), `page-${pageIndex + 1}.json`);
-  }
-
-  getPageHtmlPath(jobId: string, pageIndex: number): string {
-    return path.join(this.getPageDirectory(jobId), `page-${pageIndex + 1}.html`);
-  }
-
-  getPageCssPath(jobId: string, pageIndex: number): string {
-    return path.join(this.getStyleDirectory(jobId), `page-${pageIndex + 1}.css`);
-  }
-
-  getPageImagePath(jobId: string, pageIndex: number): string {
-    return path.join(this.getImageDirectory(jobId), `page-${pageIndex + 1}.png`);
-  }
-
-  async update(jobId: string, patch: Partial<InternalJob>): Promise<InternalJob> {
-    const current = await this.get(jobId);
+  async updateJob(jobId: string, patch: Partial<StoredJobState>): Promise<StoredJobState> {
+    const current = await this.getJob(jobId);
     if (!current) {
-      throw new Error(`Unknown job: ${jobId}`);
+      throw new Error(`Job ${jobId} not found`);
     }
-
-    const next = { ...current, ...patch };
-    this.jobs.set(jobId, next);
-    await this.writeMeta(next);
+    const next: StoredJobState = { ...current, ...patch, updatedAt: new Date().toISOString() };
+    await this.saveJob(next);
     return next;
   }
 
-  async incrementProcessed(jobId: string): Promise<InternalJob> {
-    const current = await this.get(jobId);
+  async markActive(jobId: string): Promise<void> { this.activeJobs.add(jobId); }
+  async markInactive(jobId: string): Promise<void> { this.activeJobs.delete(jobId); }
+  hasActiveExtraction(): boolean { return this.activeJobs.size > 0; }
+
+  async saveSourcePdf(jobId: string, input: Uint8Array): Promise<string> {
+    const target = path.join(this.getJobDir(jobId), "source.pdf");
+    await writeFile(target, input);
+    return target;
+  }
+
+  async savePageArtifacts(jobId: string, pageIndex: number, artifacts: StoredPageArtifacts, imageBytes: Uint8Array): Promise<void> {
+    const pageNumber = pageIndex + 1;
+    await Promise.all([
+      writeFile(this.getImagePath(jobId, pageIndex), imageBytes),
+      writeJson(this.getPageJsonPath(jobId, pageIndex), artifacts.page),
+      writeFile(path.join(this.getReviewDir(jobId), `page-${pageNumber}.html`), artifacts.reviewHtmlContent, "utf8"),
+      writeFile(path.join(this.getReviewDir(jobId), `page-${pageNumber}.json`), JSON.stringify({ pageIndex, blocks: artifacts.page.blocks, confidence: artifacts.page.confidence }, null, 2), "utf8"),
+      writeFile(path.join(this.getReviewDir(jobId), `page-${pageNumber}-boxes.html`), artifacts.boxesHtmlContent, "utf8"),
+      writeFile(path.join(this.getFinalDir(jobId), `page-${pageNumber}.html`), artifacts.finalHtmlContent, "utf8"),
+      writeFile(path.join(this.getStylesDir(jobId), `page-${pageNumber}.css`), artifacts.cssContent, "utf8")
+    ]);
+  }
+
+  async getPage(jobId: string, pageIndex: number): Promise<PageResult | null> {
+    return readJson<PageResult>(this.getPageJsonPath(jobId, pageIndex));
+  }
+
+  async saveOcrArtifacts(jobId: string, pageIndex: number, ocrPage: OcrPageResult, comparison: OcrComparisonResult): Promise<void> {
+    const pageNumber = pageIndex + 1;
+    await Promise.all([
+      writeJson(path.join(this.getOcrDir(jobId), `page-${pageNumber}.ocr.json`), ocrPage),
+      writeJson(path.join(this.getOcrDir(jobId), `page-${pageNumber}.compare.json`), comparison)
+    ]);
+  }
+
+  async getOcrPage(jobId: string, pageIndex: number): Promise<OcrPageResult | null> {
+    return readJson<OcrPageResult>(path.join(this.getOcrDir(jobId), `page-${pageIndex + 1}.ocr.json`));
+  }
+
+  async getOcrComparison(jobId: string, pageIndex: number): Promise<OcrComparisonResult | null> {
+    return readJson<OcrComparisonResult>(path.join(this.getOcrDir(jobId), `page-${pageIndex + 1}.compare.json`));
+  }
+
+  async updatePage(jobId: string, pageIndex: number, patch: Partial<PageResult>): Promise<PageResult> {
+    const current = await this.getPage(jobId, pageIndex);
     if (!current) {
-      throw new Error(`Unknown job: ${jobId}`);
+      throw new Error(`Page ${pageIndex} not found for job ${jobId}`);
     }
-
-    return this.update(jobId, { processedPages: current.processedPages + 1 });
+    const next = { ...current, ...patch } satisfies PageResult;
+    await writeJson(this.getPageJsonPath(jobId, pageIndex), next);
+    return next;
   }
 
-  async get(jobId: string): Promise<InternalJob | null> {
-    const cached = this.jobs.get(jobId);
-    if (cached) {
-      return cached;
-    }
-
-    const metaPath = this.getMetaPath(jobId);
-    if (!(await fs.pathExists(metaPath))) {
-      return null;
-    }
-
-    const loaded = await fs.readJson(metaPath) as InternalJob;
-    this.jobs.set(jobId, loaded);
-    return loaded;
-  }
-
-  async savePage(jobId: string, page: StoredPage): Promise<void> {
-    await fs.writeJson(this.getPageJsonPath(jobId, page.pageIndex), page, { spaces: 2 });
-    await fs.writeFile(this.getPageHtmlPath(jobId, page.pageIndex), page.fileHtmlContent ?? page.htmlContent, "utf8");
-    if ("cssContent" in page && typeof page.cssContent === "string") {
-      await fs.writeFile(this.getPageCssPath(jobId, page.pageIndex), page.cssContent, "utf8");
+  async listPageConfidences(jobId: string): Promise<Array<{ pageIndex: number; confidence: number }>> {
+    try {
+      const entries = await readdir(this.getPagesDir(jobId));
+      const results: Array<{ pageIndex: number; confidence: number }> = [];
+      for (const entry of entries) {
+        if (!entry.endsWith('.json')) continue;
+        const page = await readJson<PageResult>(path.join(this.getPagesDir(jobId), entry));
+        if (page) results.push({ pageIndex: page.pageIndex, confidence: page.confidence });
+      }
+      return results.sort((a, b) => a.pageIndex - b.pageIndex);
+    } catch {
+      return [];
     }
   }
 
-  async readPage(jobId: string, pageIndex: number): Promise<StoredPage | null> {
-    const pagePath = this.getPageJsonPath(jobId, pageIndex);
-    if (!(await fs.pathExists(pagePath))) {
-      return null;
+  getJobDir(jobId: string): string { return path.join(JOBS_ROOT, jobId); }
+  getMetaPath(jobId: string): string { return path.join(this.getJobDir(jobId), "meta.json"); }
+  getPagesDir(jobId: string): string { return path.join(this.getJobDir(jobId), "pages"); }
+  getReviewDir(jobId: string): string { return path.join(this.getJobDir(jobId), "review"); }
+  getFinalDir(jobId: string): string { return path.join(this.getJobDir(jobId), "final"); }
+  getStylesDir(jobId: string): string { return path.join(this.getJobDir(jobId), "styles"); }
+  getFontsDir(jobId: string): string { return path.join(this.getJobDir(jobId), "fonts"); }
+  getOcrDir(jobId: string): string { return path.join(this.getJobDir(jobId), "ocr"); }
+  getImagesDir(jobId: string): string { return path.join(this.getJobDir(jobId), "images"); }
+  getImagePath(jobId: string, pageIndex: number): string { return path.join(this.getImagesDir(jobId), `page-${pageIndex + 1}.png`); }
+  getPageJsonPath(jobId: string, pageIndex: number): string { return path.join(this.getPagesDir(jobId), `${pageIndex}.json`); }
+
+  async jobExists(jobId: string): Promise<boolean> {
+    try {
+      const meta = await stat(this.getMetaPath(jobId));
+      return meta.isFile();
+    } catch {
+      return false;
     }
-
-    return fs.readJson(pagePath) as Promise<StoredPage>;
   }
 
-  async writeSourcePdf(jobId: string, sourceFilePath: string): Promise<void> {
-    await fs.copy(sourceFilePath, this.getSourcePdfPath(jobId), { overwrite: true });
-  }
-
-  private async writeMeta(job: InternalJob): Promise<void> {
-    await fs.writeJson(this.getMetaPath(job.id), job, { spaces: 2 });
+  emptySummary(jobId: string): JobEditSummary {
+    return EMPTY_EDIT_SUMMARY(jobId);
   }
 }
 
-export function createJobRecord(id: string, sourcePath?: string, sourceFileName?: string): InternalJob {
-  return {
-    id,
-    status: ExtractionStatus.pending,
-    pageCount: 0,
-    createdAt: new Date().toISOString(),
-    processedPages: 0,
-    sourcePath,
-    sourceFileName
-  };
-}
-
+export const jobStore = new JobStore();
 

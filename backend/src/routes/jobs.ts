@@ -1,133 +1,161 @@
-﻿import { ExtractionStatus } from "../types.js";
-import { Router } from "express";
-import fs from "fs-extra";
-import multer from "multer";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { v4 as uuid } from "uuid";
-import { runExtraction } from "../services/extractor.js";
-import { createJobRecord, type JobStore } from "../services/jobStore.js";
+import { Router } from "express";
+import multer from "multer";
+import { ExtractionStatus, type JobsResponse } from "../types.js";
+import { extractPDF, getActiveEngine } from "../services/extractor.js";
+import { buildEditSummary } from "../services/fixStore.js";
+import { fingerprintPdf } from "../services/fingerprinter.js";
+import { jobStore, type StoredJobState } from "../services/jobStore.js";
+import { loadProfile } from "../services/profileStore.js";
 
-function normalizeDriveRoot(value: string): string {
-  return path.resolve(value).toLowerCase();
+const upload = multer({ storage: multer.memoryStorage() });
+const allowedRoots = ["E:/pdf-review-workbench", "E:/pdf-inputs", "E:/"];
+
+async function validatePdfBytes(buffer: Uint8Array): Promise<void> {
+  if (buffer.length < 4 || String.fromCharCode(buffer[0], buffer[1], buffer[2], buffer[3]) !== "%PDF") {
+    throw new Error("Input is not a valid PDF");
+  }
 }
 
-function isMultipart(contentType?: string): boolean {
-  return contentType?.toLowerCase().startsWith("multipart/form-data") ?? false;
+function normalizeLocalPath(localPath: string): string {
+  const normalized = path.resolve(localPath);
+  const allowed = allowedRoots.some((root) => normalized.toLowerCase().startsWith(path.resolve(root).toLowerCase()));
+  if (!allowed) {
+    throw new Error("Local path is outside allowed roots");
+  }
+  return normalized;
 }
 
-function isAllowedPath(targetPath: string, allowedRoots: string[]): boolean {
-  const normalizedTarget = normalizeDriveRoot(targetPath);
-  return allowedRoots.some((root) => normalizedTarget.startsWith(normalizeDriveRoot(root)));
+async function createJobState(filePath: string, originalFileName: string, warning?: "large_file"): Promise<StoredJobState> {
+  const fingerprint = await fingerprintPdf(filePath);
+  const now = new Date().toISOString();
+  return {
+    id: randomUUID(),
+    status: ExtractionStatus.pending,
+    pageCount: 0,
+    pdfFingerprint: fingerprint,
+    createdAt: now,
+    updatedAt: now,
+    dpi: 150,
+    filePath,
+    originalFileName,
+    processedPages: 0,
+    warning
+  };
 }
 
-interface JobsRouterOptions {
-  store: JobStore;
-  uploadRoot: string;
-  allowedRoots: string[];
-}
+export const jobsRouter = Router();
 
-export function createJobsRouter(options: JobsRouterOptions): Router {
-  const router = Router();
-  const upload = multer({ dest: options.uploadRoot });
+jobsRouter.post("/", upload.single("file"), async (req, res) => {
+  try {
+    let bytes: Uint8Array;
+    let originalFileName: string;
+    let warning: "large_file" | undefined;
 
-  router.post("/", async (req, res, next) => {
-    const handle = async () => {
-      const localPath = typeof req.body.path === "string" ? req.body.path.trim() : "";
-      const file = (req as typeof req & { file?: Express.Multer.File }).file;
+    if (req.file) {
+      bytes = new Uint8Array(req.file.buffer);
+      originalFileName = req.file.originalname;
+      warning = req.file.size > 50 * 1024 * 1024 ? "large_file" : undefined;
+    } else if (typeof req.body?.localPath === "string") {
+      const normalizedPath = normalizeLocalPath(req.body.localPath);
+      bytes = new Uint8Array(await readFile(normalizedPath));
+      originalFileName = path.basename(normalizedPath);
+      warning = bytes.byteLength > 50 * 1024 * 1024 ? "large_file" : undefined;
+    } else {
+      res.status(400).json({ message: "Provide a PDF upload or localPath" });
+      return;
+    }
 
-      if (!file && !localPath) {
-        res.status(400).json({ message: "Provide a PDF upload or a trusted local path." });
-        return;
-      }
+    await validatePdfBytes(bytes);
+    const tempPath = path.join(jobStore.storageRoot, 'uploads', `${Date.now()}-${originalFileName}`);
+    await mkdir(path.dirname(tempPath), { recursive: true });
+    await writeFile(tempPath, bytes);
+    const job = await createJobState(tempPath, originalFileName, warning);
+    await jobStore.create(job);
+    const sourcePdfPath = await jobStore.saveSourcePdf(job.id, bytes);
+    await jobStore.updateJob(job.id, { filePath: sourcePdfPath });
+    const profile = await loadProfile(job.pdfFingerprint);
 
-      if (localPath) {
-        const resolvedPath = path.resolve(localPath);
-        if (!isAllowedPath(resolvedPath, options.allowedRoots)) {
-          res.status(403).json({ message: "Path is outside the configured trusted roots." });
-          return;
-        }
+    void extractPDF({ ...job, filePath: sourcePdfPath }, profile, 150).catch((error) => {
+      console.error(`[jobs] extraction failed for ${job.id}:`, error);
+    });
 
-        if (!(await fs.pathExists(resolvedPath))) {
-          res.status(404).json({ message: "PDF path does not exist." });
-          return;
-        }
-      }
-
-      const id = uuid();
-      const sourcePath = file?.path ?? path.resolve(localPath);
-      const sourceFileName = file?.originalname ?? path.basename(sourcePath);
-      const job = createJobRecord(id, sourcePath, sourceFileName);
-      await options.store.create(job);
-      await options.store.writeSourcePdf(id, sourcePath);
-
-      res.status(202).json(job);
-
-      void runExtraction({
-        job,
-        store: options.store,
-        sourcePdfPath: options.store.getSourcePdfPath(id)
-      }).catch(() => undefined);
+    const response: JobsResponse = {
+      job: { ...job, filePath: sourcePdfPath },
+      editSummary: jobStore.emptySummary(job.id),
+      warning
     };
+    res.status(202).json({ ...response, engine: getActiveEngine() });
+  } catch (error) {
+    res.status(400).json({ message: error instanceof Error ? error.message : "Unable to create job" });
+  }
+});
 
-    if (isMultipart(req.headers["content-type"])) {
-      upload.single("file")(req, res, (error) => {
-        if (error) {
-          next(error);
-          return;
-        }
-
-        void handle().catch(next);
-      });
-      return;
-    }
-
-    void handle().catch(next);
-  });
-
-  router.get("/:id", async (req, res) => {
-    const job = await options.store.get(req.params.id);
+jobsRouter.get("/:id", async (req, res) => {
+  try {
+    const job = await jobStore.getJob(req.params.id);
     if (!job) {
-      res.status(404).json({ message: "Job not found." });
+      res.status(404).json({ message: "Job not found" });
       return;
     }
+    const editSummary = await buildEditSummary(job.id);
+    res.json({ job, editSummary });
+  } catch (error) {
+    res.status(500).json({ message: error instanceof Error ? error.message : "Unable to load job" });
+  }
+});
 
-    res.json(job);
-  });
-
-  router.get("/:id/pages/:pageIndex", async (req, res) => {
-    const job = await options.store.get(req.params.id);
-    if (!job) {
-      res.status(404).json({ message: "Job not found." });
-      return;
-    }
-
-    if (job.status !== ExtractionStatus.done && job.status !== ExtractionStatus.processing) {
-      res.status(409).json({ message: "Pages are not available for this job yet." });
-      return;
-    }
-
+jobsRouter.get("/:id/pages/:pageIndex", async (req, res) => {
+  try {
     const pageIndex = Number(req.params.pageIndex);
-    const page = await options.store.readPage(job.id, pageIndex);
+    const page = await jobStore.getPage(req.params.id, pageIndex);
     if (!page) {
-      res.status(404).json({ message: "Page not found." });
+      res.status(404).json({ ready: false });
       return;
     }
-
     res.json(page);
-  });
+  } catch (error) {
+    res.status(500).json({ message: error instanceof Error ? error.message : "Unable to load page" });
+  }
+});
 
-  router.get("/:id/pages/:pageIndex/image", async (req, res) => {
-    const imagePath = options.store.getPageImagePath(req.params.id, Number(req.params.pageIndex));
-    if (!(await fs.pathExists(imagePath))) {
-      res.status(404).json({ message: "Page image not found." });
+jobsRouter.get("/:id/pages/:pageIndex/image", async (req, res) => {
+  try {
+    const pageIndex = Number(req.params.pageIndex);
+    const imagePath = jobStore.getImagePath(req.params.id, pageIndex);
+    res.sendFile(imagePath);
+  } catch (error) {
+    res.status(404).json({ message: error instanceof Error ? error.message : "Image not found" });
+  }
+});
+
+jobsRouter.get("/:id/pages/:pageIndex/ocr", async (req, res) => {
+  try {
+    const pageIndex = Number(req.params.pageIndex);
+    const ocrPage = await jobStore.getOcrPage(req.params.id, pageIndex);
+    if (!ocrPage) {
+      res.status(404).json({ ready: false });
       return;
     }
+    res.json(ocrPage);
+  } catch (error) {
+    res.status(500).json({ message: error instanceof Error ? error.message : "Unable to load OCR result" });
+  }
+});
 
-    res.type("png");
-    res.sendFile(imagePath);
-  });
-
-  return router;
-}
-
+jobsRouter.get("/:id/pages/:pageIndex/ocr-compare", async (req, res) => {
+  try {
+    const pageIndex = Number(req.params.pageIndex);
+    const comparison = await jobStore.getOcrComparison(req.params.id, pageIndex);
+    if (!comparison) {
+      res.status(404).json({ ready: false });
+      return;
+    }
+    res.json(comparison);
+  } catch (error) {
+    res.status(500).json({ message: error instanceof Error ? error.message : "Unable to load OCR comparison" });
+  }
+});
 

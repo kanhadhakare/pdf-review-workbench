@@ -1,19 +1,11 @@
-﻿{
-  "compileOnSave": false,
+{
   "compilerOptions": {
-    "strict": true,
     "target": "ES2022",
     "module": "ES2022",
     "moduleResolution": "bundler",
-    "useDefineForClassFields": false,
-    "lib": ["ES2022", "dom"],
+    "strict": true,
     "skipLibCheck": true,
-    "types": []
-  },
-  "angularCompilerOptions": {
-    "strictTemplates": true,
-    "strictInjectionParameters": true,
-    "strictInputAccessModifiers": true
-  },
-  "files": ["src/main.ts"]
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true
+  }
 }

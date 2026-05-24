@@ -1,12 +1,10 @@
-﻿{
-  "name": "pdf-review-workbench-web",
+{
+  "name": "pdf-review-workbench-frontend",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "start": "ng serve --proxy-config proxy.conf.json",
-    "build": "ng build",
-    "watch": "ng build --watch --configuration development",
-    "test": "ng test"
+    "build": "ng build"
   },
   "dependencies": {
     "@angular/common": "^21.2.0",
