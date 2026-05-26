@@ -1,5 +1,6 @@
-﻿node_modules/
+node_modules/
 dist/
+.venv/
 storage/*
 !storage/jobs/
 !storage/uploads/
@@ -7,5 +8,5 @@ storage/jobs/*
 !storage/jobs/.gitkeep
 storage/uploads/*
 !storage/uploads/.gitkeep
-
-
+.python311/*
+tools/target/*

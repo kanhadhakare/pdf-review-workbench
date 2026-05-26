@@ -1,10 +1,11 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { type ClassifierResult, type PageResult, type TextBlock } from "../types.js";
+import { modelsStorageRoot } from "../config/runtime.js";
 
-const modelsRoot = path.resolve("E:/pdf-review-workbench/storage/models");
-const modelA = path.join(modelsRoot, 'classifier-a.pkl');
-const modelB = path.join(modelsRoot, 'classifier-b.pkl');
+const modelsRoot = modelsStorageRoot;
+const modelA = path.join(modelsRoot, "classifier-a.pkl");
+const modelB = path.join(modelsRoot, "classifier-b.pkl");
 
 function simpleHash(input: string): number {
   let hash = 0;
@@ -18,7 +19,7 @@ function simpleHash(input: string): number {
 export function modelsAvailable(): boolean { return existsSync(modelA) && existsSync(modelB); }
 export async function warmClassifier(): Promise<void> { return; }
 
-export async function classifyBlocks(blocks: TextBlock[], page: Pick<PageResult, 'pageWidth' | 'pageHeight'>): Promise<ClassifierResult[]> {
+export async function classifyBlocks(blocks: TextBlock[], page: Pick<PageResult, "pageWidth" | "pageHeight">): Promise<ClassifierResult[]> {
   void page;
   if (!modelsAvailable()) return [];
   return blocks.map((block) => ({
@@ -28,4 +29,3 @@ export async function classifyBlocks(blocks: TextBlock[], page: Pick<PageResult,
     confidence: Number((((block.fontSize / 24) * 0.3) + ((simpleHash(block.fontName) % 100) / 100) * 0.1 + 0.6).toFixed(3))
   }));
 }
-

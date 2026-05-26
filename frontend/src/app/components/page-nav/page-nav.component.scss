@@ -23,6 +23,16 @@
   border-color: rgba(74, 144, 226, 0.35);
 }
 
+.page-nav__item.is-draft:not(.is-active) {
+  background: rgba(243, 156, 18, 0.08);
+  border-color: rgba(243, 156, 18, 0.28);
+}
+
+.page-nav__item.is-edited:not(.is-active) {
+  background: rgba(39, 174, 96, 0.08);
+  border-color: rgba(39, 174, 96, 0.28);
+}
+
 .page-nav__dot {
   width: 9px;
   height: 9px;

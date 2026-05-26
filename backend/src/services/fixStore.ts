@@ -1,8 +1,9 @@
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { type FixDelta, type JobEditSummary, type PageVisit } from "../types.js";
+import { fixesStorageRoot } from "../config/runtime.js";
 
-const FIXES_ROOT = path.resolve("E:/pdf-review-workbench/storage/fixes");
+const FIXES_ROOT = fixesStorageRoot;
 
 async function ensureDir(dirPath: string): Promise<void> { await mkdir(dirPath, { recursive: true }); }
 async function readJson<T>(filePath: string): Promise<T | null> { try { return JSON.parse(await readFile(filePath, "utf8")) as T; } catch { return null; } }
@@ -25,7 +26,7 @@ function template(jobId: string): JobEditSummary {
     jobId,
     totalEdits: 0,
     editsByPage: {},
-    editsByType: { move: 0, resize: 0, "text-correct": 0, "tag-change": 0, merge: 0, delete: 0, "style-change": 0, split: 0 },
+    editsByType: { move: 0, resize: 0, "text-correct": 0, "tag-change": 0, merge: 0, delete: 0, "style-change": 0, split: 0, "create-group": 0 },
     pagesReviewed: [],
     pagesEdited: [],
     pagesAccurate: [],
@@ -41,7 +42,7 @@ export async function saveFix(fix: FixDelta): Promise<void> {
 }
 
 export async function saveVisit(visit: PageVisit): Promise<void> {
-  const dir = path.join(FIXES_ROOT, visit.jobId, 'visits');
+  const dir = path.join(FIXES_ROOT, visit.jobId, "visits");
   await ensureDir(dir);
   await writeFile(path.join(dir, `${visit.pageIndex}.json`), JSON.stringify(visit, null, 2), "utf8");
 }
@@ -50,7 +51,7 @@ export async function getAllFixes(): Promise<FixDelta[]> {
   const files = await walk(FIXES_ROOT);
   const fixes: FixDelta[] = [];
   for (const file of files) {
-    if (!file.endsWith('.json') || file.includes(`${path.sep}visits${path.sep}`)) continue;
+    if (!file.endsWith(".json") || file.includes(`${path.sep}visits${path.sep}`)) continue;
     const parsed = await readJson<FixDelta>(file);
     if (parsed) fixes.push(parsed);
   }
@@ -63,7 +64,7 @@ export async function getFixesByJob(jobId: string): Promise<FixDelta[]> {
 }
 
 export async function getVisitsByJob(jobId: string): Promise<PageVisit[]> {
-  const dir = path.join(FIXES_ROOT, jobId, 'visits');
+  const dir = path.join(FIXES_ROOT, jobId, "visits");
   const files = await walk(dir);
   const visits: PageVisit[] = [];
   for (const file of files) {
@@ -107,4 +108,3 @@ export async function hasFixesForJob(jobId: string): Promise<boolean> {
     return false;
   }
 }
-

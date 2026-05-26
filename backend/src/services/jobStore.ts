@@ -1,8 +1,9 @@
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { type ExtractionJob, type JobEditSummary, type OcrComparisonResult, type OcrPageResult, type PageResult } from "../types.js";
+import { type DraftPageState, type ExtractionJob, type FontExtractionManifest, type JobEditSummary, type OcrComparisonResult, type OcrPageResult, type PageResult } from "../types.js";
+import { storageRoot } from "../config/runtime.js";
 
-const STORAGE_ROOT = path.resolve("E:/pdf-review-workbench/storage");
+const STORAGE_ROOT = storageRoot;
 const JOBS_ROOT = path.join(STORAGE_ROOT, "jobs");
 
 export interface StoredPageArtifacts {
@@ -17,6 +18,8 @@ export interface StoredJobState extends ExtractionJob {
   processedPages: number;
   errorMessage?: string;
   warning?: "large_file";
+  hasPdf2HtmlEx?: boolean;
+  pdf2htmlExWarnings?: string[];
 }
 
 const EMPTY_EDIT_SUMMARY = (jobId: string): JobEditSummary => ({
@@ -31,7 +34,8 @@ const EMPTY_EDIT_SUMMARY = (jobId: string): JobEditSummary => ({
     merge: 0,
     delete: 0,
     "style-change": 0,
-    split: 0
+    split: 0,
+    "create-group": 0
   },
   pagesReviewed: [],
   pagesEdited: [],
@@ -93,6 +97,21 @@ export class JobStore {
     return readJson<StoredJobState>(this.getMetaPath(jobId));
   }
 
+  async listJobs(): Promise<StoredJobState[]> {
+    try {
+      const entries = await readdir(JOBS_ROOT, { withFileTypes: true });
+      const jobs: StoredJobState[] = [];
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const job = await this.getJob(entry.name);
+        if (job) jobs.push(job);
+      }
+      return jobs.sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+    } catch {
+      return [];
+    }
+  }
+
   async updateJob(jobId: string, patch: Partial<StoredJobState>): Promise<StoredJobState> {
     const current = await this.getJob(jobId);
     if (!current) {
@@ -106,6 +125,22 @@ export class JobStore {
   async markActive(jobId: string): Promise<void> { this.activeJobs.add(jobId); }
   async markInactive(jobId: string): Promise<void> { this.activeJobs.delete(jobId); }
   hasActiveExtraction(): boolean { return this.activeJobs.size > 0; }
+  async hasActiveExtractions(): Promise<boolean> {
+    try {
+      const entries = await readdir(JOBS_ROOT, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const meta = await this.getJob(entry.name);
+        if (!meta) continue;
+        if (meta.status === "pending" || meta.status === "processing") {
+          return true;
+        }
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
 
   async saveSourcePdf(jobId: string, input: Uint8Array): Promise<string> {
     const target = path.join(this.getJobDir(jobId), "source.pdf");
@@ -124,6 +159,32 @@ export class JobStore {
       writeFile(path.join(this.getFinalDir(jobId), `page-${pageNumber}.html`), artifacts.finalHtmlContent, "utf8"),
       writeFile(path.join(this.getStylesDir(jobId), `page-${pageNumber}.css`), artifacts.cssContent, "utf8")
     ]);
+  }
+
+  async saveFontFile(jobId: string, fileName: string, bytes: Uint8Array): Promise<void> {
+    await writeFile(path.join(this.getFontsDir(jobId), fileName), bytes);
+  }
+
+  async saveFontManifest(jobId: string, manifest: FontExtractionManifest): Promise<void> {
+    await writeJson(this.getFontManifestPath(jobId), manifest);
+  }
+
+  async saveCropImage(jobId: string, fileName: string, bytes: Uint8Array): Promise<void> {
+    await ensureDir(this.getCropsDir(jobId));
+    await writeFile(path.join(this.getCropsDir(jobId), fileName), bytes);
+  }
+
+  async saveRegeneratedFinalPage(jobId: string, pageIndex: number, page: PageResult, finalHtmlContent: string, cssContent: string): Promise<void> {
+    const pageNumber = pageIndex + 1;
+    await Promise.all([
+      writeJson(this.getPageJsonPath(jobId, pageIndex), page),
+      writeFile(path.join(this.getFinalDir(jobId), `page-${pageNumber}.html`), finalHtmlContent, "utf8"),
+      writeFile(path.join(this.getStylesDir(jobId), `page-${pageNumber}.css`), cssContent, "utf8")
+    ]);
+  }
+
+  async getFontManifest(jobId: string): Promise<FontExtractionManifest | null> {
+    return readJson<FontExtractionManifest>(this.getFontManifestPath(jobId));
   }
 
   async getPage(jobId: string, pageIndex: number): Promise<PageResult | null> {
@@ -171,13 +232,50 @@ export class JobStore {
     }
   }
 
+  getDraftDir(jobId: string): string { return path.join(this.getJobDir(jobId), "draft"); }
+  getDraftPagePath(jobId: string, pageIndex: number): string { return path.join(this.getDraftDir(jobId), `${pageIndex}.json`); }
+
+  async saveDraftPage(jobId: string, pageIndex: number, state: Omit<DraftPageState, "jobId" | "pageIndex" | "updatedAt">): Promise<DraftPageState> {
+    const payload: DraftPageState = { jobId, pageIndex, ...state, updatedAt: new Date().toISOString() };
+    await writeJson(this.getDraftPagePath(jobId, pageIndex), payload);
+    return payload;
+  }
+
+  async getDraftPage(jobId: string, pageIndex: number): Promise<DraftPageState | null> {
+    return readJson<DraftPageState>(this.getDraftPagePath(jobId, pageIndex));
+  }
+
+  async listDraftPages(jobId: string): Promise<number[]> {
+    try {
+      const entries = await readdir(this.getDraftDir(jobId));
+      return entries
+        .filter((name) => name.endsWith(".json"))
+        .map((name) => Number(name.replace(/\.json$/, "")))
+        .filter((value) => Number.isFinite(value))
+        .sort((a, b) => a - b);
+    } catch {
+      return [];
+    }
+  }
+
+  async deleteDraftPage(jobId: string, pageIndex: number): Promise<void> {
+    try {
+      await unlink(this.getDraftPagePath(jobId, pageIndex));
+    } catch {
+      // ignore missing
+    }
+  }
+
   getJobDir(jobId: string): string { return path.join(JOBS_ROOT, jobId); }
   getMetaPath(jobId: string): string { return path.join(this.getJobDir(jobId), "meta.json"); }
   getPagesDir(jobId: string): string { return path.join(this.getJobDir(jobId), "pages"); }
   getReviewDir(jobId: string): string { return path.join(this.getJobDir(jobId), "review"); }
   getFinalDir(jobId: string): string { return path.join(this.getJobDir(jobId), "final"); }
   getStylesDir(jobId: string): string { return path.join(this.getJobDir(jobId), "styles"); }
+  getPdf2HtmlExDir(jobId: string): string { return path.join(this.getJobDir(jobId), "pdf2htmlex"); }
   getFontsDir(jobId: string): string { return path.join(this.getJobDir(jobId), "fonts"); }
+  getCropsDir(jobId: string): string { return path.join(this.getImagesDir(jobId), "crops"); }
+  getFontManifestPath(jobId: string): string { return path.join(this.getFontsDir(jobId), "manifest.json"); }
   getOcrDir(jobId: string): string { return path.join(this.getJobDir(jobId), "ocr"); }
   getImagesDir(jobId: string): string { return path.join(this.getJobDir(jobId), "images"); }
   getImagePath(jobId: string, pageIndex: number): string { return path.join(this.getImagesDir(jobId), `page-${pageIndex + 1}.png`); }

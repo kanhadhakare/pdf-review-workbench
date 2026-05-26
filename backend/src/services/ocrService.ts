@@ -1,20 +1,131 @@
 import { spawn } from "node:child_process";
-import path from "node:path";
 import pLimit from "p-limit";
-import { type OcrPageResult } from "../types.js";
+import { type OcrLine, type OcrPageResult, type OcrWord } from "../types.js";
+import { tesseractCommandCandidates } from "../config/runtime.js";
 
 const OCR_LIMIT = pLimit(1);
-const OCR_SCRIPT = path.resolve("E:/pdf-review-workbench/backend/src/scripts/paddle_ocr_runner.py");
 
-let pythonCommand: string | null = null;
+let tesseractCommand: string | null = null;
+let cachedUnavailableMessage: string | null = null;
 
-function candidateCommands(): string[] {
-  return process.platform === "win32" ? ["python", "py"] : ["python3", "python"];
+interface TesseractWordRow {
+  level: number;
+  pageNum: number;
+  blockNum: number;
+  parNum: number;
+  lineNum: number;
+  wordNum: number;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  conf: number;
+  text: string;
+}
+
+function buildResult(message: string, status: "unavailable" | "failed", pageIndex: number, pageWidth: number, pageHeight: number): OcrPageResult {
+  return {
+    pageIndex,
+    width: pageWidth,
+    height: pageHeight,
+    engine: "tesseract",
+    status,
+    averageConfidence: 0,
+    lines: [],
+    message
+  };
+}
+
+function parseInteger(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function parseFloatValue(value: string): number {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function parseTsv(stdout: string): TesseractWordRow[] {
+  const lines = stdout.split(/\r?\n/).filter(Boolean);
+  if (lines.length <= 1) {
+    return [];
+  }
+  const rows: TesseractWordRow[] = [];
+  for (const line of lines.slice(1)) {
+    const parts = line.split("\t");
+    if (parts.length < 12) {
+      continue;
+    }
+    rows.push({
+      level: parseInteger(parts[0]),
+      pageNum: parseInteger(parts[1]),
+      blockNum: parseInteger(parts[2]),
+      parNum: parseInteger(parts[3]),
+      lineNum: parseInteger(parts[4]),
+      wordNum: parseInteger(parts[5]),
+      left: parseInteger(parts[6]),
+      top: parseInteger(parts[7]),
+      width: parseInteger(parts[8]),
+      height: parseInteger(parts[9]),
+      conf: parseFloatValue(parts[10]),
+      text: parts.slice(11).join("\t").trim()
+    });
+  }
+  return rows.filter((row) => row.level === 5 && row.text);
+}
+
+function buildLines(rows: TesseractWordRow[]): { lines: OcrLine[]; averageConfidence: number } {
+  const groups = new Map<string, OcrWord[]>();
+  for (const row of rows) {
+    const word: OcrWord = {
+      text: row.text,
+      x: row.left,
+      y: row.top,
+      w: row.width,
+      h: row.height,
+      confidence: Math.max(0, Math.min(1, row.conf / 100))
+    };
+    const key = `${row.pageNum}:${row.blockNum}:${row.parNum}:${row.lineNum}`;
+    const line = groups.get(key);
+    if (line) {
+      line.push(word);
+    } else {
+      groups.set(key, [word]);
+    }
+  }
+
+  const ocrLines = [...groups.values()].map((words) => {
+    const ordered = words.sort((a, b) => a.x - b.x);
+    const x = Math.min(...ordered.map((word) => word.x));
+    const y = Math.min(...ordered.map((word) => word.y));
+    const right = Math.max(...ordered.map((word) => word.x + word.w));
+    const bottom = Math.max(...ordered.map((word) => word.y + word.h));
+    const confidence = ordered.reduce((sum, word) => sum + word.confidence, 0) / Math.max(ordered.length, 1);
+    return {
+      text: ordered.map((word) => word.text).join(" ").replace(/\s+/g, " ").trim(),
+      x,
+      y,
+      w: right - x,
+      h: bottom - y,
+      confidence: Number(confidence.toFixed(4)),
+      words: ordered
+    } satisfies OcrLine;
+  }).filter((line) => line.text);
+
+  const averageConfidence = ocrLines.length
+    ? Number((ocrLines.reduce((sum, line) => sum + line.confidence, 0) / ocrLines.length).toFixed(4))
+    : 0;
+
+  return {
+    lines: ocrLines.sort((a, b) => (Math.abs(a.y - b.y) > 2 ? a.y - b.y : a.x - b.x)),
+    averageConfidence
+  };
 }
 
 async function runCommand(command: string, imagePath: string, pageIndex: number, pageWidth: number, pageHeight: number): Promise<OcrPageResult> {
   return new Promise((resolve) => {
-    const child = spawn(command, [OCR_SCRIPT, imagePath, String(pageIndex), String(pageWidth), String(pageHeight)], {
+    const child = spawn(command, [imagePath, "stdout", "-l", "eng", "--psm", "6", "tsv", "quiet"], {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true
     });
@@ -27,67 +138,57 @@ async function runCommand(command: string, imagePath: string, pageIndex: number,
       stderr += chunk.toString();
     });
     child.on("error", (error) => {
-      resolve({
-        pageIndex,
-        width: pageWidth,
-        height: pageHeight,
-        engine: "paddleocr",
-        status: "unavailable",
-        averageConfidence: 0,
-        lines: [],
-        message: `Unable to launch ${command}: ${error.message}`
-      });
+      resolve(buildResult(`Unable to launch ${command}: ${error.message}`, "unavailable", pageIndex, pageWidth, pageHeight));
     });
-    child.on("close", () => {
+    child.on("close", (code) => {
+      if (code !== 0) {
+        resolve(buildResult((stderr || stdout || `Tesseract exited with code ${code}`).trim(), "failed", pageIndex, pageWidth, pageHeight));
+        return;
+      }
       try {
-        const parsed = JSON.parse(stdout) as OcrPageResult;
-        if (!parsed.message && stderr.trim()) {
-          parsed.message = stderr.trim();
-        }
-        resolve(parsed);
-      } catch {
+        const parsedRows = parseTsv(stdout);
+        const { lines, averageConfidence } = buildLines(parsedRows);
         resolve({
           pageIndex,
           width: pageWidth,
           height: pageHeight,
-          engine: "paddleocr",
-          status: "failed",
-          averageConfidence: 0,
-          lines: [],
-          message: stderr.trim() || "PaddleOCR returned invalid JSON"
+          engine: "tesseract",
+          status: "ok",
+          averageConfidence,
+          lines,
+          message: stderr.trim() || undefined
         });
+      } catch (error) {
+        resolve(buildResult(error instanceof Error ? error.message : "Tesseract returned invalid TSV", "failed", pageIndex, pageWidth, pageHeight));
       }
     });
   });
 }
 
-async function resolvePythonCommand(imagePath: string, pageIndex: number, pageWidth: number, pageHeight: number): Promise<OcrPageResult> {
-  if (pythonCommand) {
-    return runCommand(pythonCommand, imagePath, pageIndex, pageWidth, pageHeight);
+async function resolveTesseractCommand(imagePath: string, pageIndex: number, pageWidth: number, pageHeight: number): Promise<OcrPageResult> {
+  if (tesseractCommand) {
+    return runCommand(tesseractCommand, imagePath, pageIndex, pageWidth, pageHeight);
   }
-  for (const candidate of candidateCommands()) {
+  if (cachedUnavailableMessage) {
+    return buildResult(cachedUnavailableMessage, "unavailable", pageIndex, pageWidth, pageHeight);
+  }
+  const candidates = tesseractCommandCandidates();
+  const attemptMessages: string[] = [];
+  for (const candidate of candidates) {
+    console.info(`[ocr] probing tesseract candidate: ${candidate}`);
     const result = await runCommand(candidate, imagePath, pageIndex, pageWidth, pageHeight);
+    console.info(`[ocr] candidate result: ${candidate} -> ${result.status}${result.message ? ` (${result.message})` : ""}`);
     if (result.status === "ok" || result.status === "failed") {
-      pythonCommand = candidate;
+      tesseractCommand = candidate;
       return result;
     }
-    if (result.status === "unavailable" && !result.message?.includes("Unable to launch")) {
-      pythonCommand = candidate;
-      return result;
-    }
+    attemptMessages.push(`${candidate}: ${result.message ?? result.status}`);
   }
-  return {
-    pageIndex,
-    width: pageWidth,
-    height: pageHeight,
-    engine: "paddleocr",
-    status: "unavailable",
-    averageConfidence: 0,
-    lines: [],
-    message: "Python or PaddleOCR is not available on this machine"
-  };
+  cachedUnavailableMessage = `Tesseract is not available. Checked: ${attemptMessages.join(" | ") || candidates.join(", ")}`;
+  console.warn(`[ocr] ${cachedUnavailableMessage}`);
+  return buildResult(cachedUnavailableMessage, "unavailable", pageIndex, pageWidth, pageHeight);
 }
 
-export async function runPaddleOcr(imagePath: string, pageIndex: number, pageWidth: number, pageHeight: number): Promise<OcrPageResult> {
-  return OCR_LIMIT(() => resolvePythonCommand(imagePath, pageIndex, pageWidth, pageHeight));
+export async function runOcr(imagePath: string, pageIndex: number, pageWidth: number, pageHeight: number): Promise<OcrPageResult> {
+  return OCR_LIMIT(() => resolveTesseractCommand(imagePath, pageIndex, pageWidth, pageHeight));
 }

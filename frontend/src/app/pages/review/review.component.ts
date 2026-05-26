@@ -2,16 +2,15 @@ import { CommonModule } from "@angular/common";
 import { ChangeDetectionStrategy, Component, ElementRef, HostListener, inject, signal, viewChild } from "@angular/core";
 import { ActivatedRoute, RouterLink } from "@angular/router";
 import { type JobEditSummary, type OcrComparisonResult, type PageResult } from "../../types";
-import { FixService } from "../../services/fix.service";
 import { JobService } from "../../services/job.service";
 import { PageNavComponent } from "../../components/page-nav/page-nav.component";
-import { SplitViewComponent } from "../../components/split-view/split-view.component";
-import { FixEditorComponent } from "../../components/fix-editor/fix-editor.component";
+import { FormsModule } from "@angular/forms";
+import { DomSanitizer, type SafeResourceUrl } from "@angular/platform-browser";
 
 @Component({
   selector: "app-review-page",
   standalone: true,
-  imports: [CommonModule, RouterLink, PageNavComponent, SplitViewComponent, FixEditorComponent],
+  imports: [CommonModule, RouterLink, PageNavComponent, FormsModule],
   templateUrl: "./review.component.html",
   styleUrls: ["./review.component.scss"],
   changeDetection: ChangeDetectionStrategy.OnPush
@@ -19,8 +18,7 @@ import { FixEditorComponent } from "../../components/fix-editor/fix-editor.compo
 export class ReviewComponent {
   private readonly route = inject(ActivatedRoute);
   private readonly jobs = inject(JobService);
-  private readonly fixes = inject(FixService);
-  private readonly imageViewport = viewChild<ElementRef<HTMLDivElement>>("imageViewport");
+  private readonly sanitizer = inject(DomSanitizer);
   private readonly editorViewport = viewChild<ElementRef<HTMLDivElement>>("editorViewport");
   readonly jobId = signal(this.route.snapshot.paramMap.get("jobId") ?? "");
 
@@ -33,19 +31,48 @@ export class ReviewComponent {
   readonly ocrComparison = signal<OcrComparisonResult | null>(null);
   readonly loading = signal("Loading...");
   readonly pageScale = signal(1);
-  readonly editMode = signal(false);
-  readonly viewMode = signal<"split" | "html-only">("split");
-  readonly pendingSummary = signal<{ total: number; byType: Record<string, number> }>({ total: 0, byType: {} });
+  readonly viewMode = signal<"split" | "html-only">("html-only");
+  readonly htmlScale = signal(1);
+  readonly draftPageMap = signal<Record<number, boolean>>({});
+  readonly hasPdf2HtmlEx = signal(false);
+  readonly pdf2htmlExWarnings = signal<string[]>([]);
 
   constructor() {
-    this.jobs.getEditSummary(this.jobId()).subscribe({
-      next: ({ job, editSummary }) => {
-        this.pageCount.set(job.pageCount);
-        this.editSummary.set(editSummary);
-        this.editCountMap.set({ ...editSummary.editsByPage });
-        this.loadPage(0);
+    this.jobs.getResumeInfo(this.jobId()).subscribe({
+      next: (resume) => {
+        this.draftPageMap.set(Object.fromEntries((resume.draftPageIndices ?? []).map((index) => [index, true])));
+        this.jobs.getEditSummary(this.jobId()).subscribe({
+          next: (data: any) => {
+            const job = data.job as any;
+            const editSummary = data.editSummary as JobEditSummary;
+            this.pageCount.set(job.pageCount);
+            this.editSummary.set(editSummary);
+            this.editCountMap.set({ ...editSummary.editsByPage });
+            this.hasPdf2HtmlEx.set(Boolean(data.hasPdf2HtmlEx));
+            this.pdf2htmlExWarnings.set(Array.isArray(data.pdf2htmlExWarnings) ? data.pdf2htmlExWarnings : []);
+            const resumeIndex = resume.lastVisitedPageIndex ?? (resume.draftPageIndices?.[resume.draftPageIndices.length - 1] ?? 0);
+            const nextIndex = Math.max(0, Math.min(job.pageCount - 1, resumeIndex));
+            this.pageIndex.set(nextIndex);
+            this.loadPage(nextIndex);
+          },
+          error: () => this.loading.set("Unable to load review session.")
+        });
       },
-      error: () => this.loading.set("Unable to load review session.")
+      error: () => {
+        this.jobs.getEditSummary(this.jobId()).subscribe({
+          next: (data: any) => {
+            const job = data.job as any;
+            const editSummary = data.editSummary as JobEditSummary;
+            this.pageCount.set(job.pageCount);
+            this.editSummary.set(editSummary);
+            this.editCountMap.set({ ...editSummary.editsByPage });
+            this.hasPdf2HtmlEx.set(Boolean(data.hasPdf2HtmlEx));
+            this.pdf2htmlExWarnings.set(Array.isArray(data.pdf2htmlExWarnings) ? data.pdf2htmlExWarnings : []);
+            this.loadPage(0);
+          },
+          error: () => this.loading.set("Unable to load review session.")
+        });
+      }
     });
   }
 
@@ -57,7 +84,6 @@ export class ReviewComponent {
   onKeydown(event: KeyboardEvent): void {
     if (event.key === "ArrowLeft") this.previousPage();
     if (event.key === "ArrowRight") this.nextPage();
-    if (event.key.toLowerCase() === "e") this.editMode.set(!this.editMode());
   }
 
   transform(): string { return `scale(${this.pageScale()})`; }
@@ -65,7 +91,7 @@ export class ReviewComponent {
   scaledHeight(): number { return this.page() ? Math.round(this.page()!.pageHeight * this.pageScale()) : 0; }
 
   updatePending(summary: { total: number; byType: Record<string, number> }): void {
-    this.pendingSummary.set(summary);
+    void summary;
   }
 
   handleFixesSaved(summary: JobEditSummary): void {
@@ -75,9 +101,11 @@ export class ReviewComponent {
 
   private loadPage(index: number): void {
     this.loading.set(`Loading page ${index + 1}...`);
-    this.pendingSummary.set({ total: 0, byType: {} });
     this.ocrComparison.set(null);
-    this.fixes.recordVisit(this.jobId(), index).subscribe({ next: () => void 0, error: () => void 0 });
+    this.jobs.getResumeInfo(this.jobId()).subscribe({
+      next: (resume) => this.draftPageMap.set(Object.fromEntries((resume.draftPageIndices ?? []).map((value) => [value, true]))),
+      error: () => void 0
+    });
     this.jobs.getPage(this.jobId(), index).subscribe({
       next: (page) => {
         this.page.set(page);
@@ -95,23 +123,28 @@ export class ReviewComponent {
     });
   }
 
+  finalHtmlUrl(): SafeResourceUrl {
+    const page = this.page();
+    if (!page) return this.sanitizer.bypassSecurityTrustResourceUrl("about:blank");
+    const pageNumber = page.pageIndex + 1;
+    const url = this.hasPdf2HtmlEx()
+      ? `/storage/jobs/${this.jobId()}/pdf2htmlex/source.html#pf${pageNumber}`
+      : `/storage/jobs/${this.jobId()}/review/page-${pageNumber}.html`;
+    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
+  }
+
   private updateScale(): void {
     const page = this.page();
     const editorViewport = this.editorViewport()?.nativeElement;
     if (!page || !editorViewport) return;
 
-    const imageViewport = this.imageViewport()?.nativeElement;
     const widthCandidates = [(editorViewport.clientWidth - 24) / page.pageWidth];
     const heightCandidates = [(editorViewport.clientHeight - 24) / page.pageHeight];
-
-    if (this.viewMode() === "split" && imageViewport) {
-      widthCandidates.push((imageViewport.clientWidth - 24) / page.pageWidth);
-      heightCandidates.push((imageViewport.clientHeight - 24) / page.pageHeight);
-    }
 
     const widthScale = Math.min(...widthCandidates);
     const heightScale = Math.min(...heightCandidates);
     this.pageScale.set(Number(Math.max(0.01, Math.min(1, widthScale, heightScale)).toFixed(4)));
+    this.htmlScale.set(this.pageScale());
   }
 }
 

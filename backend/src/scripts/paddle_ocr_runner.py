@@ -86,8 +86,13 @@ def main():
         return
 
     try:
-        ocr = PaddleOCR(use_angle_cls=False, lang="en", show_log=False, use_gpu=False)
-        result = ocr.ocr(str(image_path), cls=False)
+        ocr = PaddleOCR(
+            lang="en",
+            use_doc_orientation_classify=False,
+            use_doc_unwarping=False,
+            use_textline_orientation=False
+        )
+        result = ocr.ocr(str(image_path))
         raw_lines = result[0] if isinstance(result, list) and result else []
         lines = []
         total_confidence = 0.0

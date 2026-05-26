@@ -1,13 +1,13 @@
 import { CommonModule } from "@angular/common";
 import { ChangeDetectionStrategy, Component, inject, signal } from "@angular/core";
 import { FormsModule } from "@angular/forms";
-import { Router } from "@angular/router";
+import { Router, RouterLink } from "@angular/router";
 import { JobService } from "../../services/job.service";
 
 @Component({
   selector: "app-upload-page",
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, RouterLink],
   templateUrl: "./upload.component.html",
   styleUrls: ["./upload.component.scss"],
   changeDetection: ChangeDetectionStrategy.OnPush
@@ -18,6 +18,7 @@ export class UploadComponent {
 
   readonly useLocalPath = signal(false);
   readonly localPath = signal("");
+  readonly enableOcrValidation = signal(false);
   readonly selectedFile = signal<File | null>(null);
   readonly error = signal("");
   readonly status = signal("Idle");
@@ -33,7 +34,7 @@ export class UploadComponent {
     this.error.set("");
     this.busy.set(true);
     this.status.set(this.useLocalPath() ? "Loading local PDF..." : "Uploading...");
-    this.jobs.createJob(this.selectedFile(), this.useLocalPath() ? this.localPath() : null).subscribe({
+    this.jobs.createJob(this.selectedFile(), this.useLocalPath() ? this.localPath() : null, this.enableOcrValidation()).subscribe({
       next: (response) => {
         this.status.set("Extracting pages...");
         this.jobs.pollJob(response.job.id).subscribe({

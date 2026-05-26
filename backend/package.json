@@ -4,9 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "node ./scripts/run-backend-dev.mjs",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/server.js"
+    "start": "node ./scripts/run-backend-start.mjs",
+    "ensure:pdfbox-font-extractor": "node ./scripts/ensure-pdfbox-font-extractor.mjs",
+    "build:pdfbox-font-extractor": "node ./scripts/ensure-pdfbox-font-extractor.mjs --force"
   },
   "dependencies": {
     "@napi-rs/canvas": "^0.1.80",

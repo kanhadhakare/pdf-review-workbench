@@ -69,6 +69,7 @@ export async function updateProfileFromFix(profile: ExtractionProfile, fix: FixD
       break;
     }
     case 'resize': break;
+    case 'create-group': break;
   }
   await saveProfile(next);
   return next;

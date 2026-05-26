@@ -1,0 +1,36 @@
+[1m[33m
+Warning: This is a simple server for use in testing or debugging Angular applications
+locally. It hasn't been reviewed for security issues.
+
+Binding this server to an open connection can result in compromising your application or
+computer. Using a different host than the one passed to the "--host" flag might result in
+websocket connection issues.
+    [39m[22m
+[1m[31m[31mX [41;31m[[41;97mERROR[41;31m][0m [1mTS2339: Property 'nextReviewColor' does not exist on type 'FixEditorComponent'.[0m [1m[35m[plugin angular-compiler][0m
+
+    src/app/components/fix-editor/fix-editor.component.ts:415:24:
+[37m      415 │       reviewColor: this.[32mnextReviewColor[37m()
+          ╵                         [32m~~~~~~~~~~~~~~~[0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mTS2339: Property 'nextReviewColor' does not exist on type 'FixEditorComponent'.[0m [1m[35m[plugin angular-compiler][0m
+
+    src/app/components/fix-editor/fix-editor.component.ts:463:24:
+[37m      463 │       reviewColor: this.[32mnextReviewColor[37m(),
+          ╵                         [32m~~~~~~~~~~~~~~~[0m
+
+[39m[22m
+[1m[31m[31mX [41;31m[[41;97mERROR[41;31m][0m [1mTS2339: Property 'nextReviewColor' does not exist on type 'FixEditorComponent'.[0m [1m[35m[plugin angular-compiler][0m
+
+    src/app/components/fix-editor/fix-editor.component.ts:415:24:
+[37m      415 │       reviewColor: this.[32mnextReviewColor[37m()
+          ╵                         [32m~~~~~~~~~~~~~~~[0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mTS2339: Property 'nextReviewColor' does not exist on type 'FixEditorComponent'.[0m [1m[35m[plugin angular-compiler][0m
+
+    src/app/components/fix-editor/fix-editor.component.ts:463:24:
+[37m      463 │       reviewColor: this.[32mnextReviewColor[37m(),
+          ╵                         [32m~~~~~~~~~~~~~~~[0m
+
+[39m[22m

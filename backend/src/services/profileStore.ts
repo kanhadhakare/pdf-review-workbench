@@ -1,8 +1,9 @@
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { type ExtractionProfile, type ProfileSummary } from "../types.js";
+import { profilesStorageRoot } from "../config/runtime.js";
 
-const PROFILES_ROOT = path.resolve("E:/pdf-review-workbench/storage/profiles");
+const PROFILES_ROOT = profilesStorageRoot;
 const cache = new Map<string, ExtractionProfile>();
 
 function defaultProfile(fingerprint: string): ExtractionProfile {
@@ -53,7 +54,7 @@ export async function listProfiles(): Promise<ProfileSummary[]> {
   const files = await readdir(PROFILES_ROOT);
   const profiles: ProfileSummary[] = [];
   for (const file of files) {
-    if (!file.endsWith('.json')) continue;
+    if (!file.endsWith(".json")) continue;
     const profile = await loadProfile(file.replace(/\.json$/, ""));
     profiles.push({ fingerprint: profile.fingerprint, sampleCount: profile.sampleCount, lastUpdated: profile.lastUpdated });
   }
@@ -61,4 +62,3 @@ export async function listProfiles(): Promise<ProfileSummary[]> {
 }
 
 export async function warmProfiles(): Promise<void> { await listProfiles(); }
-

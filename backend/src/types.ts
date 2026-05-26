@@ -5,7 +5,7 @@ export enum ExtractionStatus {
   failed = "failed"
 }
 
-export type SemanticTag = "h1" | "h2" | "h3" | "p" | "span" | "caption" | "artifact";
+export type SemanticTag = "h1" | "h2" | "h3" | "p" | "span" | "caption" | "artifact" | "img";
 
 export interface BlockStyles {
   textIndent: number;
@@ -22,6 +22,20 @@ export interface RawSpan {
   text: string;
   fontSize: number;
   fontName: string;
+  fontColor?: string;
+}
+
+export interface SemanticChildSpan {
+  id: string;
+  text: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  lineIndex: number;
+  styleOverrides: Partial<Pick<TextBlock, "fontSize" | "fontName" | "fontWeight" | "fontColor">> & {
+    styles?: Partial<BlockStyles>;
+  };
 }
 
 export interface TextBlock {
@@ -34,12 +48,24 @@ export interface TextBlock {
   fontSize: number;
   fontName: string;
   fontWeight: "normal" | "bold";
+  fontColor: string;
   confidence: number;
   tag: SemanticTag;
   pageIndex: number;
   styles: BlockStyles;
   isFirstLineIndented: boolean;
   rawSpans: RawSpan[];
+  textMode?: "plain" | "pre";
+  semanticChildren?: SemanticChildSpan[];
+  sourceSpanIds?: string[];
+  reviewColor?: string;
+  imageCrop?: {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    fileName?: string;
+  };
 }
 
 export interface ExtractionJob {
@@ -52,6 +78,7 @@ export interface ExtractionJob {
   dpi: number;
   filePath: string;
   originalFileName: string;
+  enableOcrValidation?: boolean;
 }
 
 export interface PageResult {
@@ -67,7 +94,22 @@ export interface PageResult {
   ocrValidation?: OcrValidationSummary;
 }
 
-export type FixType = "move" | "resize" | "text-correct" | "tag-change" | "merge" | "delete" | "style-change" | "split";
+export interface DraftPageState {
+  jobId: string;
+  pageIndex: number;
+  blocks: TextBlock[];
+  pendingFixes: FixDelta[];
+  hiddenWordIds: string[];
+  updatedAt: string;
+}
+
+export interface ResumeInfo {
+  jobId: string;
+  lastVisitedPageIndex: number | null;
+  draftPageIndices: number[];
+}
+
+export type FixType = "move" | "resize" | "text-correct" | "tag-change" | "merge" | "delete" | "style-change" | "split" | "create-group";
 
 export interface FixDelta {
   id: string;
@@ -174,7 +216,7 @@ export interface OcrPageResult {
   pageIndex: number;
   width: number;
   height: number;
-  engine: "paddleocr";
+  engine: "paddleocr" | "tesseract";
   status: "ok" | "unavailable" | "failed";
   averageConfidence: number;
   lines: OcrLine[];
@@ -218,4 +260,23 @@ export interface OcrValidationSummary {
   score: number | null;
   issueCount: number;
   message?: string;
+}
+
+export interface ExtractedFontAsset {
+  resourceName: string;
+  baseFont: string;
+  family: string;
+  format: "truetype" | "opentype" | "type1" | "woff" | "woff2" | "unknown";
+  fileName: string;
+  fontWeight: "normal" | "bold";
+  fontStyle: "normal" | "italic";
+  pages: number[];
+}
+
+export interface FontExtractionManifest {
+  sourcePdf: string;
+  engine: "pdfbox" | "mupdf";
+  status: "ok" | "unavailable" | "failed";
+  message?: string;
+  fonts: ExtractedFontAsset[];
 }

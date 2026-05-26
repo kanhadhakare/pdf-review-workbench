@@ -1,0 +1,29 @@
+<main class="pdf-dashboard">
+  <header class="pdf-dashboard__header">
+    <h1>Uploaded PDFs</h1>
+    <a routerLink="/">Upload new</a>
+  </header>
+
+  <p class="error" *ngIf="error()">{{ error() }}</p>
+
+  <section class="pdf-dashboard__grid" *ngIf="items().length; else empty">
+    <a *ngFor="let item of items()" class="pdf-card" [routerLink]="['/review', item.job.id]">
+      <div class="pdf-card__icon" *ngIf="iconUrl(item) as icon; else placeholder">
+        <img [src]="icon" alt="">
+      </div>
+      <ng-template #placeholder>
+        <div class="pdf-card__placeholder">PDF</div>
+      </ng-template>
+      <div class="pdf-card__meta">
+        <strong class="pdf-card__name">{{ item.job.originalFileName }}</strong>
+        <span class="pdf-card__detail">Status: {{ item.job.status }} | Pages: {{ item.job.pageCount }}</span>
+        <span class="pdf-card__detail">Edits: {{ item.editSummary.totalEdits }} | Draft pages: {{ item.draftPageIndices.length }}</span>
+      </div>
+    </a>
+  </section>
+
+  <ng-template #empty>
+    <p class="pdf-dashboard__empty">No PDFs uploaded yet.</p>
+  </ng-template>
+</main>
+

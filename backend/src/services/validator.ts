@@ -79,7 +79,7 @@ export function applyOcrValidation(baseScore: number, ocrPage: OcrPageResult, co
         status: "unavailable",
         score: null,
         issueCount: 0,
-        message: ocrPage.message ?? "PaddleOCR is unavailable"
+        message: ocrPage.message ?? `${ocrPage.engine} is unavailable`
       }
     };
   }
@@ -91,7 +91,7 @@ export function applyOcrValidation(baseScore: number, ocrPage: OcrPageResult, co
         status: "failed",
         score: null,
         issueCount: 0,
-        message: ocrPage.message ?? "PaddleOCR validation failed"
+        message: ocrPage.message ?? `${ocrPage.engine} validation failed`
       }
     };
   }
