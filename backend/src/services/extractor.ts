@@ -4,17 +4,16 @@ import pLimit from "p-limit";
 import { ExtractionStatus, type ClassifierResult, type ExtractedFontAsset, type ExtractionProfile, type FontExtractionManifest, type PageResult, type RawSpan, type SemanticTag, type TextBlock } from "../types.js";
 import { classifyBlocks } from "./classifier.js";
 import { jobStore, type StoredJobState } from "./jobStore.js";
-import { compareOcrToBlocks } from "./ocrComparer.js";
-import { runOcr } from "./ocrService.js";
 import { extractFontsWithPdfBox } from "./pdfboxFontService.js";
-import { applyOcrValidation, validatePage } from "./validator.js";
+import { validatePage } from "./validator.js";
 import { isPdf2HtmlExEnabled, runPdf2HtmlEx, validatePdf2HtmlExOutput } from "./pdf2htmlExService.js";
 
 type MuPdfModule = typeof import("mupdf");
-type PdfJsModule = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
 type MuPdfPdfDocument = import("mupdf").PDFDocument;
 type MuPdfPdfPage = import("mupdf").PDFPage;
 type MuPdfPdfObject = import("mupdf").PDFObject;
+
+// pdf.js is disabled for now. MuPDF is the only extraction engine.
 
 interface ExtractorSpan extends RawSpan {
   pageIndex: number;
@@ -25,6 +24,7 @@ interface PageExtraction {
   pageIndex: number;
   pageWidth: number;
   pageHeight: number;
+  scale: number;
   leftMarginPx: number;
   spans: ExtractorSpan[];
   imageBytes: Uint8Array;
@@ -50,10 +50,6 @@ async function importMuPdf(): Promise<MuPdfModule | null> {
   } catch {
     return null;
   }
-}
-
-async function importPdfJs(): Promise<PdfJsModule> {
-  return import("pdfjs-dist/legacy/build/pdf.mjs");
 }
 
 function normalizeText(text: string, profile: ExtractionProfile): string {
@@ -83,6 +79,12 @@ function escapeHtml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/\"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function cssSingleQuoted(value: string): string {
+  // Safe CSS string for use inside inline style attributes.
+  // Use single quotes to avoid breaking `style="..."` attributes.
+  return `'${String(value).replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
 }
 
 function cleanPdfFontName(fontName: string): string {
@@ -127,6 +129,50 @@ function parseColorsFromStructuredHtml(html: string): string[] {
   return colors;
 }
 
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#([0-9]+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'");
+}
+
+type HtmlSpanRun = { text: string; color: string | null; x: number | null; y: number | null };
+
+function parseHtmlSpanRuns(html: string): HtmlSpanRun[] {
+  // MuPDF structured HTML is typically: <p style="top:..;left:.."><span style="...color:...">TEXT</span></p>
+  // We extract spans in document order and keep the paragraph top/left as hints.
+  const runs: HtmlSpanRun[] = [];
+  const paragraphRegex = /<p\b[^>]*style\s*=\s*"([^"]*)"[^>]*>([\s\S]*?)<\/p>/gi;
+  const spanRegex = /<span\b[^>]*style\s*=\s*"([^"]*)"[^>]*>([\s\S]*?)<\/span>/gi;
+
+  const parsePt = (styleText: string, key: "top" | "left"): number | null => {
+    const m = styleText.match(new RegExp(`${key}\\s*:\\s*([0-9.]+)pt`, "i"));
+    return m ? Number(m[1]) : null;
+  };
+
+  for (const pMatch of html.matchAll(paragraphRegex)) {
+    const pStyle = String(pMatch[1] ?? "");
+    const pInner = String(pMatch[2] ?? "");
+    const y = parsePt(pStyle, "top");
+    const x = parsePt(pStyle, "left");
+    for (const sMatch of pInner.matchAll(spanRegex)) {
+      const spanStyle = String(sMatch[1] ?? "");
+      const rawText = String(sMatch[2] ?? "");
+      const colorMatch = spanStyle.match(/color\s*:\s*(#[0-9A-Fa-f]{3,6}|rgba?\([^\)]*\))/i);
+      const color = colorMatch ? sanitizeColor(colorMatch[1]) : null;
+      const text = decodeHtmlEntities(rawText).replace(/<[^>]+>/g, "");
+      runs.push({ text, color, x, y });
+    }
+  }
+
+  return runs;
+}
+
 function getFontStreamExtension(fontStream: any): string {
   const subtype = fontStream.get("Subtype")?.asName?.()?.toLowerCase?.();
   if (subtype === "truetype") return "ttf";
@@ -152,11 +198,13 @@ function getFontFileFormat(extension: string): ExtractedFontAsset["format"] {
 }
 
 function getCssFontFormat(format: ExtractedFontAsset["format"]): string {
+  if (format === "type1") return "opentype";
   return format === "unknown" ? "opentype" : format;
 }
 
 function isBrowserSafeFontFormat(format: ExtractedFontAsset["format"]): boolean {
-  return format === "truetype" || format === "opentype" || format === "woff" || format === "woff2";
+  // pdfbox extractor may emit Type1 fonts as .otf files; browsers can still load them as OpenType.
+  return format === "truetype" || format === "opentype" || format === "type1" || format === "woff" || format === "woff2";
 }
 
 function buildFontFaceCss(fontAssets: ExtractedFontAsset[]): string {
@@ -323,9 +371,9 @@ async function extractWithMuPdf(filePath: string, profile: ExtractionProfile, dp
     const imageBytes = pixmap.asPNG();
     const structured = page.toStructuredText("preserve-whitespace,preserve-spans");
     const html = structured.asHTML(0);
-    const colorHints = parseColorsFromStructuredHtml(html);
-    let colorIndex = 0;
-    const json = JSON.parse(structured.asJSON(scale)) as StructuredPageJson;
+    const htmlRuns = parseHtmlSpanRuns(html);
+    let runIndex = 0;
+    const json = JSON.parse(structured.asJSON(1)) as StructuredPageJson;
     const spans: ExtractorSpan[] = [];
     for (const block of json.blocks ?? []) {
       if (block.type !== "text") continue;
@@ -334,69 +382,43 @@ async function extractWithMuPdf(filePath: string, profile: ExtractionProfile, dp
         const text = normalizeText(line.text ?? "", profile);
         if (!bbox || !text) continue;
         const fontName = line.font?.name ?? "Unknown";
-        const rawColor = colorHints[colorIndex++] ?? "#000000";
+        let rawColor: string | null = null;
+        let bestFallback: { color: string | null; score: number } | null = null;
+        for (let attempts = 0; attempts < 12 && runIndex < htmlRuns.length; attempts += 1) {
+          const run = htmlRuns[runIndex++];
+          const runText = normalizeText(run.text ?? "", profile);
+          if (!runText) continue;
+          if (runText === text) {
+            rawColor = run.color;
+            bestFallback = null;
+            break;
+          }
+          // Heuristic fallback: sometimes MuPDF JSON "line.text" merges multiple HTML spans (or vice versa).
+          // If texts overlap and positions are close, treat the run's color as a candidate.
+          const overlap = text.includes(runText) || runText.includes(text);
+          if (overlap && run.x !== null && run.y !== null) {
+            const dx = Math.abs(run.x - bbox.x);
+            const dy = Math.abs(run.y - bbox.y);
+            const score = dx + (dy * 2);
+            if (!bestFallback || score < bestFallback.score) bestFallback = { color: run.color, score };
+          }
+        }
+        if (rawColor === null && bestFallback) rawColor = bestFallback.color;
         spans.push({
-          x: bbox.x + profile.coordOffsetX,
-          y: bbox.y + profile.coordOffsetY,
-          w: bbox.w,
-          h: bbox.h,
+          x: (bbox.x * scale) + profile.coordOffsetX,
+          y: (bbox.y * scale) + profile.coordOffsetY,
+          w: bbox.w * scale,
+          h: bbox.h * scale,
           text,
           fontSize: line.font?.size ?? bbox.h ?? 12,
           fontName,
-          fontColor: sanitizeColor(rawColor),
+          fontColor: sanitizeColor(rawColor ?? "#000000"),
           pageIndex,
           fontWeight: /bold|black|heavy/i.test(fontName) ? "bold" : "normal"
         });
       }
     }
-    return { pageIndex, pageWidth, pageHeight, leftMarginPx: detectLeftMarginPx(spans), spans, imageBytes };
-  })));
-}
-
-async function extractWithPdfJs(filePath: string, profile: ExtractionProfile, dpi: number): Promise<PageExtraction[]> {
-  const pdfjs = await importPdfJs();
-  const canvasModule = await import("@napi-rs/canvas");
-  activeEngine = "pdfjs-dist";
-  const task = pdfjs.getDocument({ data: new Uint8Array(await readFile(filePath)), useWorkerFetch: false } as never);
-  const document = await task.promise;
-  const scale = Math.min(200, Math.max(72, dpi)) / 72;
-  const limit = pLimit(4);
-  return Promise.all(Array.from({ length: document.numPages }, (_, zeroIndex) => limit(async () => {
-    const page = await document.getPage(zeroIndex + 1);
-    const viewport = page.getViewport({ scale });
-    const canvas = canvasModule.createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
-    const context = canvas.getContext("2d");
-    await page.render({ canvas, canvasContext: context as never, viewport } as never).promise;
-    const text = await page.getTextContent();
-    const styles = (text as any).styles as Record<string, { fontFamily?: string }> | undefined;
-    const spans: ExtractorSpan[] = [];
-    for (const item of text.items as Array<{ str: string; width: number; height: number; transform: number[]; fontName: string }>) {
-      const normalized = normalizeText(item.str, profile);
-      if (!normalized) continue;
-      const [, , , d, e, f] = item.transform;
-      const height = (item.height || Math.abs(d) || 12) * scale;
-      const fontFamily = styles?.[item.fontName]?.fontFamily;
-      spans.push({
-        x: (e * scale) + profile.coordOffsetX,
-        y: (viewport.height - (f * scale) - height) + profile.coordOffsetY,
-        w: item.width * scale,
-        h: height,
-        text: normalized,
-        fontSize: Math.abs(d) || item.height || 12,
-        fontName: fontFamily ? sanitizeFontFamily(fontFamily) : item.fontName,
-        fontColor: "#000000",
-        pageIndex: zeroIndex,
-        fontWeight: /bold|black|heavy/i.test(fontFamily ?? item.fontName) ? "bold" : "normal"
-      });
-    }
-    return {
-      pageIndex: zeroIndex,
-      pageWidth: Math.ceil(viewport.width),
-      pageHeight: Math.ceil(viewport.height),
-      leftMarginPx: detectLeftMarginPx(spans),
-      spans,
-      imageBytes: new Uint8Array(canvas.toBuffer("image/png"))
-    };
+    return { pageIndex, pageWidth, pageHeight, scale, leftMarginPx: detectLeftMarginPx(spans), spans, imageBytes };
   })));
 }
 
@@ -491,29 +513,27 @@ function buildMuPdfFallbackManifest(sourcePdf: string, fonts: ExtractedFontAsset
 }
 
 async function extractPages(filePath: string, profile: ExtractionProfile, dpi: number, jobId: string): Promise<PageExtractionResult> {
-  try {
-    const pages = await extractWithMuPdf(filePath, profile, dpi);
-    let fontManifest = await extractFontsWithPdfBox(jobId, filePath);
-    if (fontManifest.fonts.length === 0) {
-      try {
-        const fallbackFonts = await extractFontsFromMuPdf(filePath, jobId);
-        if (fallbackFonts.length > 0) {
-          fontManifest = buildMuPdfFallbackManifest(filePath, fallbackFonts);
-          await jobStore.saveFontManifest(jobId, fontManifest);
-        }
-      } catch (error) {
-        console.warn("[extractor] MuPDF font fallback failed:", error);
+  const pages = await extractWithMuPdf(filePath, profile, dpi);
+  let fontManifest = await extractFontsWithPdfBox(jobId, filePath);
+  if (fontManifest.fonts.length === 0) {
+    try {
+      const fallbackFonts = await extractFontsFromMuPdf(filePath, jobId);
+      if (fallbackFonts.length > 0) {
+        fontManifest = buildMuPdfFallbackManifest(filePath, fallbackFonts);
+        await jobStore.saveFontManifest(jobId, fontManifest);
       }
+    } catch (error) {
+      console.warn("[extractor] MuPDF font fallback failed:", error);
     }
-    return { pages, fontManifest };
-  } catch {
-    const pages = await extractWithPdfJs(filePath, profile, dpi);
-    const fontManifest = await extractFontsWithPdfBox(jobId, filePath);
-    return { pages, fontManifest };
   }
+  return { pages, fontManifest };
 }
 
-function buildWordOverlayHtml(extracted: PageExtraction, profile: ExtractionProfile, fontAssets: ExtractedFontAsset[], imageHref: string, cssHref: string): string {
+async function extractPageImagesOnly(filePath: string, profile: ExtractionProfile, dpi: number): Promise<PageExtraction[]> {
+  return await extractWithMuPdf(filePath, profile, dpi);
+}
+
+function buildCombinedReviewHtml(extracted: PageExtraction, profile: ExtractionProfile, fontAssets: ExtractedFontAsset[], imageHref: string): string {
   const words: Array<{
     x: number;
     y: number;
@@ -523,6 +543,7 @@ function buildWordOverlayHtml(extracted: PageExtraction, profile: ExtractionProf
     fontSize: number;
     fontName: string;
     fontWeight: "normal" | "bold";
+    fontStyle: "normal" | "italic";
     fontColor: string;
   }> = [];
 
@@ -543,34 +564,39 @@ function buildWordOverlayHtml(extracted: PageExtraction, profile: ExtractionProf
         fontSize: span.fontSize,
         fontName: span.fontName,
         fontWeight: span.fontWeight,
+        fontStyle: detectFontStyle(span.fontName),
         fontColor: sanitizeColor(span.fontColor ?? "#000000")
       });
     }
   }
 
-  const overlayCss = `.page__word { position: absolute; margin: 0; white-space: nowrap; overflow: visible; user-select: text; }
+  const browserSafeFonts = fontAssets.filter((font) => isBrowserSafeFontFormat(font.format));
+  const fontFaceCss = buildFontFaceCss(browserSafeFonts);
+  const overlayCss = `.page { position: relative; width: ${extracted.pageWidth}px; height: ${extracted.pageHeight}px; overflow: hidden; }
+.page__bg { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
+.page__text { position: absolute; inset: 0; z-index: 1; }
+.page__word { position: absolute; margin: 0; white-space: nowrap; overflow: visible; user-select: text; }
 .page__word { background: rgba(255, 255, 255, 0.04); }`;
 
   const elements = words
     .map((word, index) => {
       const family = resolveCssFontFamily(word.fontName, fontAssets);
-      const fontStyle = resolveCssFontStyle(word.fontName, fontAssets);
       const style = [
         `left:${word.x}px`,
         `top:${word.y}px`,
         `width:${word.w}px`,
         `height:${word.h}px`,
-        `font-size:${word.fontSize}pt`,
-        `font-family:"${family}", serif`,
+        `font-size:${Number((word.fontSize * extracted.scale).toFixed(3))}px`,
+        `font-family:${cssSingleQuoted(family)}, serif`,
         `font-weight:${word.fontWeight}`,
-        `font-style:${fontStyle}`,
+        `font-style:${word.fontStyle}`,
         `color:${word.fontColor}`
       ].join(";");
       return `<span class="page__word" data-word-index="${index}" style="${style}">${escapeHtml(word.text)}</span>`;
     })
     .join("\n");
 
-  return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<link rel="stylesheet" href="${cssHref}">\n<style>${overlayCss}</style>\n</head>\n<body>\n<div class="page">\n<img class="page__bg" src="${imageHref}" alt="">\n<div class="page__text">\n${elements}\n</div>\n</div>\n</body>\n</html>`;
+  return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<style>${fontFaceCss ? `${fontFaceCss}\n\n` : ""}${overlayCss}</style>\n</head>\n<body>\n<div class="page">\n<img class="page__bg" src="${imageHref}" alt="">\n<div class="page__text">\n${elements}\n</div>\n</div>\n</body>\n</html>`;
 }
 
 function buildPageArtifacts(jobId: string, extracted: PageExtraction, profile: ExtractionProfile, blocks: TextBlock[], fontAssets: ExtractedFontAsset[]) {
@@ -588,16 +614,13 @@ function buildPageArtifacts(jobId: string, extracted: PageExtraction, profile: E
     reviewStatus: "unvisited"
   };
   const pageNumber = extracted.pageIndex + 1;
-  const fontFaceCss = buildFontFaceCss(browserSafeFonts);
-  const cssContent = buildCss(extracted.pageWidth, extracted.pageHeight, filtered, browserSafeFonts, fontFaceCss);
-  const finalHtml = buildHtml(page, `../images/page-${pageNumber}.png`, `../styles/page-${pageNumber}.css`, "final");
-  const reviewHtml = buildWordOverlayHtml(extracted, profile, browserSafeFonts, `../images/page-${pageNumber}.png`, `../styles/page-${pageNumber}.css`);
-  const boxesHtml = buildHtml(page, `../images/page-${pageNumber}.png`, `../styles/page-${pageNumber}.css`, "boxes");
-  page.htmlContent = finalHtml;
-  return { page, cssContent, finalHtml, reviewHtml, boxesHtml };
+  const reviewHtml = buildCombinedReviewHtml(extracted, profile, browserSafeFonts, `../images/page-${pageNumber}.png`);
+  page.htmlContent = reviewHtml;
+  return { page, reviewHtml };
 }
 
 export async function extractPDF(job: StoredJobState, profile: ExtractionProfile, dpi = 150, options: { enableOcrValidation?: boolean } = {}): Promise<void> {
+  void options; // OCR disabled for now.
   await jobStore.markActive(job.id);
   await jobStore.updateJob(job.id, { status: ExtractionStatus.processing, processedPages: 0, dpi });
   try {
@@ -619,9 +642,22 @@ export async function extractPDF(job: StoredJobState, profile: ExtractionProfile
       }
     }
 
+    // If pdf2htmlEX succeeded, treat it as the source of truth for HTML output.
+    // We still rasterize page images + dimensions for navigation/viewport scaling.
+    if (pdf2htmlExReady) {
+      const pages = await extractPageImagesOnly(job.filePath, profile, dpi);
+      await jobStore.updateJob(job.id, { pageCount: pages.length });
+      for (const extracted of pages.sort((a, b) => a.pageIndex - b.pageIndex)) {
+        await jobStore.savePdf2HtmlExPage(job.id, extracted.pageIndex, extracted.pageWidth, extracted.pageHeight, extracted.imageBytes);
+        await jobStore.updateJob(job.id, { processedPages: extracted.pageIndex + 1 });
+      }
+      await jobStore.updateJob(job.id, { status: ExtractionStatus.done, pageCount: pages.length });
+      return;
+    }
+
     const { pages, fontManifest } = await extractPages(job.filePath, profile, dpi, job.id);
     await jobStore.updateJob(job.id, { pageCount: pages.length });
-    for (const extracted of pages.sort((a, b) => a.pageIndex - b.pageIndex)) {
+  for (const extracted of pages.sort((a, b) => a.pageIndex - b.pageIndex)) {
       const merged = mergeSpans(extracted.spans, profile, extracted.leftMarginPx);
       const classified = applyClassifierResults(
         merged,
@@ -635,27 +671,11 @@ export async function extractPDF(job: StoredJobState, profile: ExtractionProfile
         extracted.pageIndex,
         {
           page: built.page,
-          cssContent: built.cssContent,
-          finalHtmlContent: built.finalHtml,
-          reviewHtmlContent: built.reviewHtml,
-          boxesHtmlContent: built.boxesHtml
+          reviewHtmlContent: built.reviewHtml
         },
         extracted.imageBytes
       );
 
-      if (options.enableOcrValidation ?? job.enableOcrValidation ?? false) {
-        const ocrPage = await runOcr(jobStore.getImagePath(job.id, extracted.pageIndex), extracted.pageIndex, extracted.pageWidth, extracted.pageHeight);
-        const ocrComparison = compareOcrToBlocks(extracted.pageIndex, built.page.blocks, ocrPage);
-        const ocrValidation = applyOcrValidation(built.page.confidence, ocrPage, ocrComparison);
-        built.page.confidence = ocrValidation.confidence;
-        built.page.ocrValidation = ocrValidation.summary;
-
-        await jobStore.updatePage(job.id, extracted.pageIndex, {
-          confidence: built.page.confidence,
-          ocrValidation: built.page.ocrValidation
-        });
-        await jobStore.saveOcrArtifacts(job.id, extracted.pageIndex, ocrPage, ocrComparison);
-      }
       await jobStore.updateJob(job.id, { processedPages: extracted.pageIndex + 1 });
     }
     // If pdf2htmlEX was enabled and succeeded, it is already available for the review UI

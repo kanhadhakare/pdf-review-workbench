@@ -1,7 +1,7 @@
 import { CommonModule } from "@angular/common";
 import { ChangeDetectionStrategy, Component, ElementRef, HostListener, inject, signal, viewChild } from "@angular/core";
 import { ActivatedRoute, RouterLink } from "@angular/router";
-import { type JobEditSummary, type OcrComparisonResult, type PageResult } from "../../types";
+import { type JobEditSummary, type PageResult } from "../../types";
 import { JobService } from "../../services/job.service";
 import { PageNavComponent } from "../../components/page-nav/page-nav.component";
 import { FormsModule } from "@angular/forms";
@@ -28,14 +28,11 @@ export class ReviewComponent {
   readonly confidenceMap = signal<Record<number, number>>({});
   readonly editCountMap = signal<Record<number, number>>({});
   readonly editSummary = signal<JobEditSummary | null>(null);
-  readonly ocrComparison = signal<OcrComparisonResult | null>(null);
   readonly loading = signal("Loading...");
   readonly pageScale = signal(1);
   readonly viewMode = signal<"split" | "html-only">("html-only");
   readonly htmlScale = signal(1);
   readonly draftPageMap = signal<Record<number, boolean>>({});
-  readonly hasPdf2HtmlEx = signal(false);
-  readonly pdf2htmlExWarnings = signal<string[]>([]);
 
   constructor() {
     this.jobs.getResumeInfo(this.jobId()).subscribe({
@@ -48,8 +45,6 @@ export class ReviewComponent {
             this.pageCount.set(job.pageCount);
             this.editSummary.set(editSummary);
             this.editCountMap.set({ ...editSummary.editsByPage });
-            this.hasPdf2HtmlEx.set(Boolean(data.hasPdf2HtmlEx));
-            this.pdf2htmlExWarnings.set(Array.isArray(data.pdf2htmlExWarnings) ? data.pdf2htmlExWarnings : []);
             const resumeIndex = resume.lastVisitedPageIndex ?? (resume.draftPageIndices?.[resume.draftPageIndices.length - 1] ?? 0);
             const nextIndex = Math.max(0, Math.min(job.pageCount - 1, resumeIndex));
             this.pageIndex.set(nextIndex);
@@ -66,8 +61,6 @@ export class ReviewComponent {
             this.pageCount.set(job.pageCount);
             this.editSummary.set(editSummary);
             this.editCountMap.set({ ...editSummary.editsByPage });
-            this.hasPdf2HtmlEx.set(Boolean(data.hasPdf2HtmlEx));
-            this.pdf2htmlExWarnings.set(Array.isArray(data.pdf2htmlExWarnings) ? data.pdf2htmlExWarnings : []);
             this.loadPage(0);
           },
           error: () => this.loading.set("Unable to load review session.")
@@ -101,7 +94,6 @@ export class ReviewComponent {
 
   private loadPage(index: number): void {
     this.loading.set(`Loading page ${index + 1}...`);
-    this.ocrComparison.set(null);
     this.jobs.getResumeInfo(this.jobId()).subscribe({
       next: (resume) => this.draftPageMap.set(Object.fromEntries((resume.draftPageIndices ?? []).map((value) => [value, true]))),
       error: () => void 0
@@ -111,12 +103,6 @@ export class ReviewComponent {
         this.page.set(page);
         this.confidenceMap.update((current) => ({ ...current, [page.pageIndex]: page.confidence }));
         this.loading.set("");
-        if (page.ocrValidation && page.ocrValidation.status !== "unavailable") {
-          this.jobs.getOcrComparison(this.jobId(), index).subscribe({
-            next: (comparison) => this.ocrComparison.set(comparison),
-            error: () => this.ocrComparison.set(null)
-          });
-        }
         queueMicrotask(() => this.updateScale());
       },
       error: () => this.loading.set("Unable to load page.")
@@ -127,9 +113,7 @@ export class ReviewComponent {
     const page = this.page();
     if (!page) return this.sanitizer.bypassSecurityTrustResourceUrl("about:blank");
     const pageNumber = page.pageIndex + 1;
-    const url = this.hasPdf2HtmlEx()
-      ? `/storage/jobs/${this.jobId()}/pdf2htmlex/source.html#pf${pageNumber}`
-      : `/storage/jobs/${this.jobId()}/review/page-${pageNumber}.html`;
+    const url = `/storage/jobs/${this.jobId()}/review/page-${pageNumber}.html`;
     return this.sanitizer.bypassSecurityTrustResourceUrl(url);
   }
 

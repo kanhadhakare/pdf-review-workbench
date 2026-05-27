@@ -1,6 +1,6 @@
 import { HttpClient } from "@angular/common/http";
 import { Injectable, inject } from "@angular/core";
-import { type ExtractionJob, type JobEditSummary, type JobListItem, type OcrComparisonResult, type OcrPageResult, type PageResult, type ResumeInfo, type TrainingStatus } from "../types";
+import { type ExtractionJob, type JobEditSummary, type JobListItem, type PageResult, type ResumeInfo, type TrainingStatus } from "../types";
 import { Observable, interval } from "rxjs";
 import { exhaustMap, shareReplay, startWith, takeWhile } from "rxjs/operators";
 
@@ -12,10 +12,12 @@ export class JobService {
     if (file) {
       const form = new FormData();
       form.append("file", file, file.name);
-      form.append("enableOcrValidation", String(enableOcrValidation));
+      void enableOcrValidation; // OCR disabled for now.
+      form.append("enableOcrValidation", "false");
       return this.http.post<{ job: ExtractionJob; editSummary: JobEditSummary; warning?: "large_file" }>("/api/jobs", form);
     }
-    return this.http.post<{ job: ExtractionJob; editSummary: JobEditSummary; warning?: "large_file" }>("/api/jobs", { localPath, enableOcrValidation });
+    void enableOcrValidation;
+    return this.http.post<{ job: ExtractionJob; editSummary: JobEditSummary; warning?: "large_file" }>("/api/jobs", { localPath, enableOcrValidation: false });
   }
 
   pollJob(id: string): Observable<{ job: ExtractionJob & { processedPages?: number; errorMessage?: string }; editSummary: JobEditSummary }> {
@@ -36,13 +38,6 @@ export class JobService {
     return `/api/jobs/${jobId}/pages/${pageIndex}/image`;
   }
 
-  getOcrPage(jobId: string, pageIndex: number): Observable<OcrPageResult> {
-    return this.http.get<OcrPageResult>(`/api/jobs/${jobId}/pages/${pageIndex}/ocr`);
-  }
-
-  getOcrComparison(jobId: string, pageIndex: number): Observable<OcrComparisonResult> {
-    return this.http.get<OcrComparisonResult>(`/api/jobs/${jobId}/pages/${pageIndex}/ocr-compare`);
-  }
 
   getEditSummary(jobId: string): Observable<{ job: ExtractionJob; editSummary: JobEditSummary }> {
     return this.http.get<{ job: ExtractionJob; editSummary: JobEditSummary }>(`/api/jobs/${jobId}`);

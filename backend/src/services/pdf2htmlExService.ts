@@ -1,5 +1,4 @@
-import { mkdir, rm } from "node:fs/promises";
-import { readFile } from "node:fs/promises";
+import { mkdir, rm, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
@@ -26,7 +25,8 @@ function getDockerImage(): string {
 }
 
 export function isPdf2HtmlExEnabled(): boolean {
-  return String(process.env.PDF2HTMLEX_ENABLE ?? "").trim() === "1";
+  // Disabled: pdf2htmlEX output is not reliable for our current review workflow.
+  return false;
 }
 
 export async function runPdf2HtmlEx(inputPdfPath: string, destDir: string): Promise<void> {
@@ -80,6 +80,12 @@ export async function runPdf2HtmlEx(inputPdfPath: string, destDir: string): Prom
       "pdf2htmlEX",
       "--dest-dir",
       containerDest,
+      "--embed-css",
+      "0",
+      "--embed-font",
+      "0",
+      "--embed-image",
+      "0",
       "--split-pages",
       "1",
       "--page-filename",
@@ -108,6 +114,9 @@ export async function runPdf2HtmlEx(inputPdfPath: string, destDir: string): Prom
 
   const args = [
     "--dest-dir", destDir,
+    "--embed-css", "0",
+    "--embed-font", "0",
+    "--embed-image", "0",
     "--split-pages", "1",
     "--page-filename", "page-%d.html",
     "--css-filename", "style.css",
@@ -131,6 +140,7 @@ export async function validatePdf2HtmlExOutput(destDir: string): Promise<string[
   const warnings: string[] = [];
   const cssPath = path.join(destDir, "style.css");
   const sourceHtmlPath = path.join(destDir, "source.html");
+  const fontsDir = path.join(destDir, "fonts");
 
   let cssText = "";
   let cssSource = "";
@@ -157,13 +167,17 @@ export async function validatePdf2HtmlExOutput(destDir: string): Promise<string[
 
   if (!/@font-face\s*\{/i.test(cssText)) warnings.push(`pdf2htmlEX output missing @font-face rules in ${cssSource} (fonts may not be extracted).`);
   if (!/\bcolor\s*:/i.test(cssText)) warnings.push(`pdf2htmlEX output missing color rules in ${cssSource} (text color may be incorrect).`);
+  try {
+    const dir = await stat(fontsDir);
+    if (!dir.isDirectory()) warnings.push("pdf2htmlEX output fonts path exists but is not a directory (fonts may not load).");
+  } catch (error) {
+    if ((error as any)?.code === "ENOENT") warnings.push("pdf2htmlEX output missing fonts directory (fonts may not load).");
+    else warnings.push("pdf2htmlEX output fonts directory could not be checked (fonts may not load).");
+  }
   return warnings;
 }
 
 export function pdf2HtmlExPagePath(jobId: string, pageIndex: number): string {
-  // pdf2htmlEX "split-pages" outputs page fragments that rely on CSS embedded in source.html.
-  // The most reliable way to render a single page with correct styles is to load source.html
-  // and jump to the requested page container id (pf1, pf2, ...).
-  const pageNumber = pageIndex + 1;
-  return `/storage/jobs/${encodeURIComponent(jobId)}/pdf2htmlex/source.html#pf${pageNumber}`;
+  // This is a URL path under /storage/jobs (served by express.static)
+  return `/storage/jobs/${encodeURIComponent(jobId)}/pdf2htmlex/page-${pageIndex + 1}.html`;
 }

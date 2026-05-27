@@ -9,9 +9,6 @@ const JOBS_ROOT = path.join(STORAGE_ROOT, "jobs");
 export interface StoredPageArtifacts {
   page: PageResult;
   reviewHtmlContent: string;
-  boxesHtmlContent: string;
-  finalHtmlContent: string;
-  cssContent: string;
 }
 
 export interface StoredJobState extends ExtractionJob {
@@ -154,10 +151,25 @@ export class JobStore {
       writeFile(this.getImagePath(jobId, pageIndex), imageBytes),
       writeJson(this.getPageJsonPath(jobId, pageIndex), artifacts.page),
       writeFile(path.join(this.getReviewDir(jobId), `page-${pageNumber}.html`), artifacts.reviewHtmlContent, "utf8"),
-      writeFile(path.join(this.getReviewDir(jobId), `page-${pageNumber}.json`), JSON.stringify({ pageIndex, blocks: artifacts.page.blocks, confidence: artifacts.page.confidence }, null, 2), "utf8"),
-      writeFile(path.join(this.getReviewDir(jobId), `page-${pageNumber}-boxes.html`), artifacts.boxesHtmlContent, "utf8"),
-      writeFile(path.join(this.getFinalDir(jobId), `page-${pageNumber}.html`), artifacts.finalHtmlContent, "utf8"),
-      writeFile(path.join(this.getStylesDir(jobId), `page-${pageNumber}.css`), artifacts.cssContent, "utf8")
+      writeFile(path.join(this.getReviewDir(jobId), `page-${pageNumber}.json`), JSON.stringify({ pageIndex, blocks: artifacts.page.blocks, confidence: artifacts.page.confidence }, null, 2), "utf8")
+    ]);
+  }
+
+  async savePdf2HtmlExPage(jobId: string, pageIndex: number, pageWidth: number, pageHeight: number, imageBytes: Uint8Array): Promise<void> {
+    const page: PageResult = {
+      pageIndex,
+      imageUrl: `/api/jobs/${jobId}/pages/${pageIndex}/image`,
+      htmlContent: "",
+      blocks: [],
+      confidence: 1,
+      pageWidth,
+      pageHeight,
+      leftMarginPx: 0,
+      reviewStatus: "unvisited"
+    };
+    await Promise.all([
+      writeFile(this.getImagePath(jobId, pageIndex), imageBytes),
+      writeJson(this.getPageJsonPath(jobId, pageIndex), page)
     ]);
   }
 
@@ -178,8 +190,9 @@ export class JobStore {
     const pageNumber = pageIndex + 1;
     await Promise.all([
       writeJson(this.getPageJsonPath(jobId, pageIndex), page),
-      writeFile(path.join(this.getFinalDir(jobId), `page-${pageNumber}.html`), finalHtmlContent, "utf8"),
-      writeFile(path.join(this.getStylesDir(jobId), `page-${pageNumber}.css`), cssContent, "utf8")
+      // Intermediate builds disabled for now.
+      void finalHtmlContent,
+      void cssContent
     ]);
   }
 

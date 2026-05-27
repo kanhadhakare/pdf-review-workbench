@@ -11,11 +11,6 @@
       <span>Use trusted local path instead of file upload</span>
     </label>
 
-    <label class="mode-toggle">
-      <input type="checkbox" [checked]="enableOcrValidation()" (change)="enableOcrValidation.set(!enableOcrValidation())">
-      <span>Run OCR validation after extraction</span>
-    </label>
-
     <div *ngIf="!useLocalPath(); else pathMode" class="drop-zone">
       <div class="drop-zone__icon">PDF</div>
       <div class="drop-zone__copy">

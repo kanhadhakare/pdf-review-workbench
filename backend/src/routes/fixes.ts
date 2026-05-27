@@ -5,7 +5,7 @@ import { jobStore } from "../services/jobStore.js";
 import { loadProfile } from "../services/profileStore.js";
 import { updateProfileFromFix } from "../services/profileUpdater.js";
 import { getTrainingStatus, shouldTrain, triggerTraining } from "../services/trainer.js";
-import { applyFixesAndRegenerateFinal } from "../services/finalBuildService.js";
+// Combined review build only: final regeneration disabled for now.
 
 export const fixesRouter = Router({ mergeParams: true });
 
@@ -32,9 +32,7 @@ fixesRouter.post("/fixes", async (req, res) => {
       await updateProfileFromFix(profile, fix, page?.leftMarginPx ?? 0);
       profileUpdated = true;
     }
-    if (fixes.length > 0 && !(await applyFixesAndRegenerateFinal(jobId, pageIndex, fixes))) {
-      await jobStore.updatePage(jobId, pageIndex, { reviewStatus: "edited" });
-    }
+    if (fixes.length > 0) await jobStore.updatePage(jobId, pageIndex, { reviewStatus: "edited" });
     const editSummary = await buildEditSummary(jobId);
     const trainingTriggered = !(await jobStore.hasActiveExtractions()) && await shouldTrain() ? await triggerTraining() : false;
     res.json({ saved: fixes.length, profileUpdated, trainingTriggered, editSummary });

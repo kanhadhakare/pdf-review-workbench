@@ -170,29 +170,11 @@ jobsRouter.get("/:id/pages/:pageIndex/image", async (req, res) => {
 });
 
 jobsRouter.get("/:id/pages/:pageIndex/ocr", async (req, res) => {
-  try {
-    const pageIndex = Number(req.params.pageIndex);
-    const ocrPage = await jobStore.getOcrPage(req.params.id, pageIndex);
-    if (!ocrPage) {
-      res.status(404).json({ ready: false });
-      return;
-    }
-    res.json(ocrPage);
-  } catch (error) {
-    res.status(500).json({ message: error instanceof Error ? error.message : "Unable to load OCR result" });
-  }
+  void req;
+  res.status(404).json({ ready: false, message: "OCR disabled" });
 });
 
 jobsRouter.get("/:id/pages/:pageIndex/ocr-compare", async (req, res) => {
-  try {
-    const pageIndex = Number(req.params.pageIndex);
-    const comparison = await jobStore.getOcrComparison(req.params.id, pageIndex);
-    if (!comparison) {
-      res.status(404).json({ ready: false });
-      return;
-    }
-    res.json(comparison);
-  } catch (error) {
-    res.status(500).json({ message: error instanceof Error ? error.message : "Unable to load OCR comparison" });
-  }
+  void req;
+  res.status(404).json({ ready: false, message: "OCR disabled" });
 });

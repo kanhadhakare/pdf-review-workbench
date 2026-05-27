@@ -31,6 +31,9 @@ function runPdf2HtmlEx(payload) {
 
   const args = [
     "--dest-dir", destDir,
+    "--embed-css", "0",
+    "--embed-font", "0",
+    "--embed-image", "0",
     "--split-pages", "1",
     "--page-filename", "page-%d.html",
     "--css-filename", "style.css",
