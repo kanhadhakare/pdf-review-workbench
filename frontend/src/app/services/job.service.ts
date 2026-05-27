@@ -51,6 +51,14 @@ export class JobService {
     return this.http.get<ResumeInfo>(`/api/jobs/${jobId}/resume`);
   }
 
+  getFinalZipUrl(jobId: string): string {
+    return `/api/jobs/${jobId}/final.zip`;
+  }
+
+  deleteJob(jobId: string): Observable<{ ok: true }> {
+    return this.http.delete<{ ok: true }>(`/api/jobs/${jobId}`);
+  }
+
   getTrainingStatus(): Observable<TrainingStatus> {
     return this.http.get<TrainingStatus>("/api/fixes/status");
   }

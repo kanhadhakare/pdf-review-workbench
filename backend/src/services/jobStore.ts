@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { type DraftPageState, type ExtractionJob, type FontExtractionManifest, type JobEditSummary, type OcrComparisonResult, type OcrPageResult, type PageResult } from "../types.js";
 import { storageRoot } from "../config/runtime.js";
@@ -305,6 +305,10 @@ export class JobStore {
     } catch {
       return false;
     }
+  }
+
+  async deleteJob(jobId: string): Promise<void> {
+    await rm(this.getJobDir(jobId), { recursive: true, force: true });
   }
 
   emptySummary(jobId: string): JobEditSummary {

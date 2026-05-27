@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { type FixDelta, type JobEditSummary, type PageVisit } from "../types.js";
 import { fixesStorageRoot } from "../config/runtime.js";
@@ -107,4 +107,8 @@ export async function hasFixesForJob(jobId: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export async function deleteFixesForJob(jobId: string): Promise<void> {
+  await rm(path.join(FIXES_ROOT, jobId), { recursive: true, force: true });
 }

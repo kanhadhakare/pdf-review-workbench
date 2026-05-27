@@ -8,8 +8,9 @@ import { ExtractionStatus, type JobsResponse } from "../types.js";
 import { getAllowedLocalPathRoots } from "../config/runtime.js";
 import { getActiveEngine } from "../services/extractor.js";
 import { spawnExtractionJob } from "../services/extractionRunner.js";
-import { buildEditSummary, getVisitsByJob } from "../services/fixStore.js";
+import { buildEditSummary, deleteFixesForJob, getVisitsByJob } from "../services/fixStore.js";
 import { fingerprintPdf } from "../services/fingerprinter.js";
+import { buildFinalArchive } from "../services/finalArchiveService.js";
 import { jobStore, type StoredJobState } from "../services/jobStore.js";
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -142,6 +143,36 @@ jobsRouter.get("/:id", async (req, res) => {
     res.json({ job, editSummary, hasPdf2HtmlEx, pdf2htmlExWarnings: job.pdf2htmlExWarnings ?? [] });
   } catch (error) {
     res.status(500).json({ message: error instanceof Error ? error.message : "Unable to load job" });
+  }
+});
+
+jobsRouter.get("/:id/final.zip", async (req, res) => {
+  try {
+    const archive = await buildFinalArchive(req.params.id);
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${archive.fileName}"`);
+    res.send(archive.buffer);
+  } catch (error) {
+    res.status(error instanceof Error && error.message === "Job not found" ? 404 : 500).json({
+      message: error instanceof Error ? error.message : "Unable to build final archive"
+    });
+  }
+});
+
+jobsRouter.delete("/:id", async (req, res) => {
+  try {
+    const job = await jobStore.getJob(req.params.id);
+    if (!job) {
+      res.status(404).json({ message: "Job not found" });
+      return;
+    }
+    await Promise.all([
+      jobStore.deleteJob(req.params.id),
+      deleteFixesForJob(req.params.id)
+    ]);
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ message: error instanceof Error ? error.message : "Unable to delete job" });
   }
 });
 

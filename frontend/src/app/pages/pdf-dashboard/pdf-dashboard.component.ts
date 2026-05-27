@@ -16,6 +16,7 @@ export class PdfDashboardComponent {
   private readonly jobs = inject(JobService);
   readonly items = signal<JobListItem[]>([]);
   readonly error = signal("");
+  readonly deletingJobId = signal<string | null>(null);
 
   constructor() {
     this.jobs.listJobs().subscribe({
@@ -27,5 +28,24 @@ export class PdfDashboardComponent {
   iconUrl(item: JobListItem): string | null {
     return item.job.pageCount > 0 ? `/api/jobs/${item.job.id}/pages/0/image` : null;
   }
-}
 
+  finalZipUrl(item: JobListItem): string {
+    return this.jobs.getFinalZipUrl(item.job.id);
+  }
+
+  deleteBook(item: JobListItem): void {
+    const confirmed = window.confirm(`Delete "${item.job.originalFileName}" from the server? This removes the extracted pages, final build, and review data for this upload.`);
+    if (!confirmed) return;
+    this.deletingJobId.set(item.job.id);
+    this.jobs.deleteJob(item.job.id).subscribe({
+      next: () => {
+        this.items.update((items) => items.filter((current) => current.job.id !== item.job.id));
+        this.deletingJobId.set(null);
+      },
+      error: () => {
+        this.error.set("Unable to delete PDF from server.");
+        this.deletingJobId.set(null);
+      }
+    });
+  }
+}

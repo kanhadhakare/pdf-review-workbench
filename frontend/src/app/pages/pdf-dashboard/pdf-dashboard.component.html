@@ -7,23 +7,30 @@
   <p class="error" *ngIf="error()">{{ error() }}</p>
 
   <section class="pdf-dashboard__grid" *ngIf="items().length; else empty">
-    <a *ngFor="let item of items()" class="pdf-card" [routerLink]="['/review', item.job.id]">
-      <div class="pdf-card__icon" *ngIf="iconUrl(item) as icon; else placeholder">
-        <img [src]="icon" alt="">
+    <article *ngFor="let item of items()" class="pdf-card">
+      <a class="pdf-card__open" [routerLink]="['/review', item.job.id]">
+        <div class="pdf-card__icon" *ngIf="iconUrl(item) as icon; else placeholder">
+          <img [src]="icon" alt="">
+        </div>
+        <ng-template #placeholder>
+          <div class="pdf-card__placeholder">PDF</div>
+        </ng-template>
+        <div class="pdf-card__meta">
+          <strong class="pdf-card__name">{{ item.job.originalFileName }}</strong>
+          <span class="pdf-card__detail">Status: {{ item.job.status }} | Pages: {{ item.job.pageCount }}</span>
+          <span class="pdf-card__detail">Edits: {{ item.editSummary.totalEdits }} | Draft pages: {{ item.draftPageIndices.length }}</span>
+        </div>
+      </a>
+      <div class="pdf-card__actions">
+        <a class="pdf-card__action" [href]="finalZipUrl(item)">Download final ZIP</a>
+        <button type="button" class="pdf-card__action pdf-card__action--danger" (click)="deleteBook(item)" [disabled]="deletingJobId() === item.job.id">
+          {{ deletingJobId() === item.job.id ? 'Deleting...' : 'Delete from server' }}
+        </button>
       </div>
-      <ng-template #placeholder>
-        <div class="pdf-card__placeholder">PDF</div>
-      </ng-template>
-      <div class="pdf-card__meta">
-        <strong class="pdf-card__name">{{ item.job.originalFileName }}</strong>
-        <span class="pdf-card__detail">Status: {{ item.job.status }} | Pages: {{ item.job.pageCount }}</span>
-        <span class="pdf-card__detail">Edits: {{ item.editSummary.totalEdits }} | Draft pages: {{ item.draftPageIndices.length }}</span>
-      </div>
-    </a>
+    </article>
   </section>
 
   <ng-template #empty>
     <p class="pdf-dashboard__empty">No PDFs uploaded yet.</p>
   </ng-template>
 </main>
-
