@@ -533,7 +533,28 @@ async function extractPageImagesOnly(filePath: string, profile: ExtractionProfil
   return await extractWithMuPdf(filePath, profile, dpi);
 }
 
-function buildCombinedReviewHtml(extracted: PageExtraction, profile: ExtractionProfile, fontAssets: ExtractedFontAsset[], imageHref: string): string {
+function buildCombinedReviewCss(extracted: PageExtraction, profile: ExtractionProfile, fontAssets: ExtractedFontAsset[]): string {
+  void profile;
+  const browserSafeFonts = fontAssets.filter((font) => isBrowserSafeFontFormat(font.format));
+  const fontFaceCss = buildFontFaceCss(browserSafeFonts);
+  const commonCss = `.page { position: relative; width: ${extracted.pageWidth}px; height: ${extracted.pageHeight}px; overflow: hidden; }
+.page__bg { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
+.page__text { position: absolute; inset: 0; z-index: 1; }
+.page__word { position: absolute; margin: 0; white-space: nowrap; overflow: visible; user-select: text; }
+.page__word { background: rgba(255, 255, 255, 0.04); }`;
+
+  const rules: string[] = [];
+  for (const [index, span] of extracted.spans.entries()) {
+    // This function operates on already extracted (scaled) spans.
+    // We keep per-word split below in HTML generation.
+    void span;
+    void index;
+  }
+
+  return `${fontFaceCss ? `${fontFaceCss}\n\n` : ""}${commonCss}`;
+}
+
+function buildCombinedReviewHtml(extracted: PageExtraction, profile: ExtractionProfile, fontAssets: ExtractedFontAsset[], imageHref: string, cssHref: string): string {
   const words: Array<{
     x: number;
     y: number;
@@ -570,33 +591,14 @@ function buildCombinedReviewHtml(extracted: PageExtraction, profile: ExtractionP
     }
   }
 
-  const browserSafeFonts = fontAssets.filter((font) => isBrowserSafeFontFormat(font.format));
-  const fontFaceCss = buildFontFaceCss(browserSafeFonts);
-  const overlayCss = `.page { position: relative; width: ${extracted.pageWidth}px; height: ${extracted.pageHeight}px; overflow: hidden; }
-.page__bg { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
-.page__text { position: absolute; inset: 0; z-index: 1; }
-.page__word { position: absolute; margin: 0; white-space: nowrap; overflow: visible; user-select: text; }
-.page__word { background: rgba(255, 255, 255, 0.04); }`;
-
   const elements = words
     .map((word, index) => {
-      const family = resolveCssFontFamily(word.fontName, fontAssets);
-      const style = [
-        `left:${word.x}px`,
-        `top:${word.y}px`,
-        `width:${word.w}px`,
-        `height:${word.h}px`,
-        `font-size:${Number((word.fontSize * extracted.scale).toFixed(3))}px`,
-        `font-family:${cssSingleQuoted(family)}, serif`,
-        `font-weight:${word.fontWeight}`,
-        `font-style:${word.fontStyle}`,
-        `color:${word.fontColor}`
-      ].join(";");
-      return `<span class="page__word" data-word-index="${index}" style="${style}">${escapeHtml(word.text)}</span>`;
+      // Per-word rules live in the per-page CSS file, keyed by a unique class.
+      return `<span class="page__word page${extracted.pageIndex + 1}__word${index}" data-word-index="${index}">${escapeHtml(word.text)}</span>`;
     })
     .join("\n");
 
-  return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<style>${fontFaceCss ? `${fontFaceCss}\n\n` : ""}${overlayCss}</style>\n</head>\n<body>\n<div class="page">\n<img class="page__bg" src="${imageHref}" alt="">\n<div class="page__text">\n${elements}\n</div>\n</div>\n</body>\n</html>`;
+  return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<link rel="stylesheet" href="${cssHref}">\n</head>\n<body>\n<div class="page">\n<img class="page__bg" src="${imageHref}" alt="">\n<div class="page__text">\n${elements}\n</div>\n</div>\n</body>\n</html>`;
 }
 
 function buildPageArtifacts(jobId: string, extracted: PageExtraction, profile: ExtractionProfile, blocks: TextBlock[], fontAssets: ExtractedFontAsset[]) {
@@ -614,9 +616,33 @@ function buildPageArtifacts(jobId: string, extracted: PageExtraction, profile: E
     reviewStatus: "unvisited"
   };
   const pageNumber = extracted.pageIndex + 1;
-  const reviewHtml = buildCombinedReviewHtml(extracted, profile, browserSafeFonts, `../images/page-${pageNumber}.png`);
+  // Per-page CSS contains both common rules and per-word absolute positioning and style.
+  const commonCss = `.page { position: relative; width: ${extracted.pageWidth}px; height: ${extracted.pageHeight}px; overflow: hidden; }\n.page__bg { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }\n.page__text { position: absolute; inset: 0; z-index: 1; }\n.page__word { position: absolute; margin: 0; white-space: nowrap; overflow: visible; user-select: text; }\n.page__word { background: rgba(255, 255, 255, 0.04); }`;
+
+  const wordRules: string[] = [];
+  // Recreate the same word split used by the HTML generator so CSS indices match.
+  let wordIndex = 0;
+  for (const span of extracted.spans) {
+    const matches = [...span.text.matchAll(/\S+/g)];
+    const unit = span.text.length > 0 ? span.w / span.text.length : span.w;
+    for (const match of matches) {
+      const text = match[0];
+      const start = match.index ?? 0;
+      const x = span.x + (start * unit);
+      const w = Math.max(2, text.length * unit);
+      const family = resolveCssFontFamily(span.fontName, browserSafeFonts);
+      const fontStyle = detectFontStyle(span.fontName);
+      const fontSizePx = Number((span.fontSize * extracted.scale).toFixed(3));
+      const color = sanitizeColor(span.fontColor ?? "#000000");
+      wordRules.push(`.page${pageNumber}__word${wordIndex} { left: ${Number(x.toFixed(2))}px; top: ${Number(span.y.toFixed(2))}px; width: ${Number(w.toFixed(2))}px; height: ${Number(span.h.toFixed(2))}px; font-size: ${fontSizePx}px; font-family: ${cssSingleQuoted(family)}, serif; font-weight: ${span.fontWeight}; font-style: ${fontStyle}; color: ${color}; }`);
+      wordIndex += 1;
+    }
+  }
+
+  const reviewCss = `${buildFontFaceCss(browserSafeFonts)}\n\n${commonCss}\n\n${wordRules.join("\n")}`;
+  const reviewHtml = buildCombinedReviewHtml(extracted, profile, browserSafeFonts, `../images/page-${pageNumber}.png`, `../style/page-${pageNumber}.css`);
   page.htmlContent = reviewHtml;
-  return { page, reviewHtml };
+  return { page, reviewHtml, reviewCssContent: reviewCss };
 }
 
 export async function extractPDF(job: StoredJobState, profile: ExtractionProfile, dpi = 150, options: { enableOcrValidation?: boolean } = {}): Promise<void> {
@@ -671,7 +697,8 @@ export async function extractPDF(job: StoredJobState, profile: ExtractionProfile
         extracted.pageIndex,
         {
           page: built.page,
-          reviewHtmlContent: built.reviewHtml
+          reviewHtmlContent: built.reviewHtml,
+          reviewCssContent: built.reviewCssContent
         },
         extracted.imageBytes
       );

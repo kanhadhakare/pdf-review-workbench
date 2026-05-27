@@ -9,6 +9,7 @@ const JOBS_ROOT = path.join(STORAGE_ROOT, "jobs");
 export interface StoredPageArtifacts {
   page: PageResult;
   reviewHtmlContent: string;
+  reviewCssContent: string;
 }
 
 export interface StoredJobState extends ExtractionJob {
@@ -77,6 +78,7 @@ export class JobStore {
       ensureDir(this.getImagesDir(job.id)),
       ensureDir(this.getPagesDir(job.id)),
       ensureDir(this.getReviewDir(job.id)),
+      ensureDir(this.getReviewStylesDir(job.id)),
       ensureDir(this.getFinalDir(job.id)),
       ensureDir(this.getStylesDir(job.id)),
       ensureDir(this.getFontsDir(job.id)),
@@ -151,6 +153,7 @@ export class JobStore {
       writeFile(this.getImagePath(jobId, pageIndex), imageBytes),
       writeJson(this.getPageJsonPath(jobId, pageIndex), artifacts.page),
       writeFile(path.join(this.getReviewDir(jobId), `page-${pageNumber}.html`), artifacts.reviewHtmlContent, "utf8"),
+      writeFile(path.join(this.getReviewStylesDir(jobId), `page-${pageNumber}.css`), artifacts.reviewCssContent, "utf8"),
       writeFile(path.join(this.getReviewDir(jobId), `page-${pageNumber}.json`), JSON.stringify({ pageIndex, blocks: artifacts.page.blocks, confidence: artifacts.page.confidence }, null, 2), "utf8")
     ]);
   }
@@ -283,6 +286,7 @@ export class JobStore {
   getMetaPath(jobId: string): string { return path.join(this.getJobDir(jobId), "meta.json"); }
   getPagesDir(jobId: string): string { return path.join(this.getJobDir(jobId), "pages"); }
   getReviewDir(jobId: string): string { return path.join(this.getJobDir(jobId), "review"); }
+  getReviewStylesDir(jobId: string): string { return path.join(this.getJobDir(jobId), "style"); }
   getFinalDir(jobId: string): string { return path.join(this.getJobDir(jobId), "final"); }
   getStylesDir(jobId: string): string { return path.join(this.getJobDir(jobId), "styles"); }
   getPdf2HtmlExDir(jobId: string): string { return path.join(this.getJobDir(jobId), "pdf2htmlex"); }
