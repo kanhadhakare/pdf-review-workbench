@@ -1,11 +1,13 @@
 import { CommonModule } from "@angular/common";
-import { ChangeDetectionStrategy, Component, ElementRef, HostListener, inject, signal, viewChild } from "@angular/core";
+import { ChangeDetectionStrategy, Component, ElementRef, HostListener, computed, inject, signal, viewChild } from "@angular/core";
 import { ActivatedRoute, RouterLink } from "@angular/router";
 import { type JobEditSummary, type PageResult } from "../../types";
 import { JobService } from "../../services/job.service";
 import { PageNavComponent } from "../../components/page-nav/page-nav.component";
 import { FormsModule } from "@angular/forms";
 import { DomSanitizer, type SafeResourceUrl } from "@angular/platform-browser";
+import { FixService } from "../../services/fix.service";
+import { type SemanticBox, type SemanticBoxTag } from "../../types";
 
 @Component({
   selector: "app-review-page",
@@ -18,6 +20,7 @@ import { DomSanitizer, type SafeResourceUrl } from "@angular/platform-browser";
 export class ReviewComponent {
   private readonly route = inject(ActivatedRoute);
   private readonly jobs = inject(JobService);
+  private readonly fixes = inject(FixService);
   private readonly sanitizer = inject(DomSanitizer);
   private readonly editorViewport = viewChild<ElementRef<HTMLDivElement>>("editorViewport");
   readonly jobId = signal(this.route.snapshot.paramMap.get("jobId") ?? "");
@@ -33,6 +36,28 @@ export class ReviewComponent {
   readonly viewMode = signal<"split" | "html-only">("html-only");
   readonly htmlScale = signal(1);
   readonly draftPageMap = signal<Record<number, boolean>>({});
+
+  readonly boxMode = signal(false);
+  readonly boxes = signal<SemanticBox[]>([]);
+  readonly activeTag = signal<SemanticBoxTag>("p");
+  readonly drawingBox = signal<{ startX: number; startY: number; x: number; y: number; w: number; h: number } | null>(null);
+  readonly savingBoxes = signal(false);
+  readonly finalRefreshToken = signal(0);
+
+  readonly reviewHtmlUrl = computed<SafeResourceUrl>(() => {
+    const page = this.page();
+    if (!page) return this.sanitizer.bypassSecurityTrustResourceUrl("about:blank");
+    const pageNumber = page.pageIndex + 1;
+    return this.sanitizer.bypassSecurityTrustResourceUrl(`/storage/jobs/${this.jobId()}/review/page-${pageNumber}.html`);
+  });
+
+  readonly finalPreviewUrl = computed<SafeResourceUrl>(() => {
+    const page = this.page();
+    if (!page) return this.sanitizer.bypassSecurityTrustResourceUrl("about:blank");
+    const pageNumber = page.pageIndex + 1;
+    const token = this.finalRefreshToken();
+    return this.sanitizer.bypassSecurityTrustResourceUrl(`/storage/jobs/${this.jobId()}/final/page-${pageNumber}.html?v=${token}`);
+  });
 
   constructor() {
     this.jobs.getResumeInfo(this.jobId()).subscribe({
@@ -103,18 +128,74 @@ export class ReviewComponent {
         this.page.set(page);
         this.confidenceMap.update((current) => ({ ...current, [page.pageIndex]: page.confidence }));
         this.loading.set("");
+        this.fixes.getBoxes(this.jobId(), index).subscribe({
+          next: ({ boxes }) => this.boxes.set(Array.isArray(boxes) ? boxes : []),
+          error: () => this.boxes.set([])
+        });
         queueMicrotask(() => this.updateScale());
       },
       error: () => this.loading.set("Unable to load page.")
     });
   }
 
-  finalHtmlUrl(): SafeResourceUrl {
+  overlayMouseDown(event: MouseEvent): void {
+    if (!this.boxMode()) return;
     const page = this.page();
-    if (!page) return this.sanitizer.bypassSecurityTrustResourceUrl("about:blank");
-    const pageNumber = page.pageIndex + 1;
-    const url = `/storage/jobs/${this.jobId()}/review/page-${pageNumber}.html`;
-    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
+    if (!page) return;
+    event.preventDefault();
+    const target = event.currentTarget as HTMLElement;
+    const rect = target.getBoundingClientRect();
+    const scale = this.pageScale();
+    const x = (event.clientX - rect.left) / scale;
+    const y = (event.clientY - rect.top) / scale;
+    this.drawingBox.set({ startX: x, startY: y, x, y, w: 0, h: 0 });
+  }
+
+  overlayMouseMove(event: MouseEvent): void {
+    const current = this.drawingBox();
+    if (!current) return;
+    event.preventDefault();
+    const target = event.currentTarget as HTMLElement;
+    const rect = target.getBoundingClientRect();
+    const scale = this.pageScale();
+    const x = (event.clientX - rect.left) / scale;
+    const y = (event.clientY - rect.top) / scale;
+    const nextX = Math.min(current.startX, x);
+    const nextY = Math.min(current.startY, y);
+    this.drawingBox.set({ ...current, x: nextX, y: nextY, w: Math.abs(x - current.startX), h: Math.abs(y - current.startY) });
+  }
+
+  overlayMouseUp(): void {
+    const current = this.drawingBox();
+    if (!current) return;
+    const tag = this.activeTag();
+    const box: SemanticBox = {
+      id: crypto.randomUUID(),
+      tag,
+      x: Number(current.x.toFixed(2)),
+      y: Number(current.y.toFixed(2)),
+      w: Number(current.w.toFixed(2)),
+      h: Number(current.h.toFixed(2)),
+      createdAt: new Date().toISOString()
+    };
+    if (box.w > 2 && box.h > 2) {
+      this.boxes.update((existing) => [...existing, box]);
+    }
+    this.drawingBox.set(null);
+  }
+
+  saveBoxes(): void {
+    if (this.savingBoxes()) return;
+    const page = this.page();
+    if (!page) return;
+    this.savingBoxes.set(true);
+    this.fixes.saveBoxes(this.jobId(), page.pageIndex, this.boxes()).subscribe({
+      next: () => {
+        this.savingBoxes.set(false);
+        this.finalRefreshToken.update((value) => value + 1);
+      },
+      error: () => this.savingBoxes.set(false)
+    });
   }
 
   private updateScale(): void {

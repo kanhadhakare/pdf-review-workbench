@@ -6,6 +6,9 @@ import { loadProfile } from "../services/profileStore.js";
 import { updateProfileFromFix } from "../services/profileUpdater.js";
 import { getTrainingStatus, shouldTrain, triggerTraining } from "../services/trainer.js";
 // Combined review build only: final regeneration disabled for now.
+import { type SemanticBox, generateFinalPageFromBoxes } from "../services/semanticTagService.js";
+import path from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 export const fixesRouter = Router({ mergeParams: true });
 
@@ -38,6 +41,45 @@ fixesRouter.post("/fixes", async (req, res) => {
     res.json({ saved: fixes.length, profileUpdated, trainingTriggered, editSummary });
   } catch (error) {
     res.status(500).json({ message: error instanceof Error ? error.message : "Unable to save fixes" });
+  }
+});
+
+fixesRouter.get("/boxes", async (req, res) => {
+  try {
+    const params = req.params as { id: string; pageIndex: string };
+    const jobId = params.id;
+    const pageIndex = Number(params.pageIndex);
+    const pageNumber = pageIndex + 1;
+    const boxesPath = path.join(jobStore.getFinalDir(jobId), `page-${pageNumber}.boxes.json`);
+    const content = await readFile(boxesPath, "utf8").catch(() => "");
+    if (!content) {
+      res.json({ boxes: [] });
+      return;
+    }
+    const payload = JSON.parse(content) as { boxes?: SemanticBox[] };
+    res.json({ boxes: Array.isArray(payload.boxes) ? payload.boxes : [] });
+  } catch (error) {
+    res.status(500).json({ message: error instanceof Error ? error.message : "Unable to load boxes" });
+  }
+});
+
+fixesRouter.put("/boxes", async (req, res) => {
+  try {
+    const params = req.params as { id: string; pageIndex: string };
+    const jobId = params.id;
+    const pageIndex = Number(params.pageIndex);
+    const pageNumber = pageIndex + 1;
+    const body = req.body as { boxes?: SemanticBox[] };
+    const boxes = Array.isArray(body.boxes) ? body.boxes : [];
+    const finalDir = jobStore.getFinalDir(jobId);
+    await mkdir(finalDir, { recursive: true });
+    const boxesPath = path.join(finalDir, `page-${pageNumber}.boxes.json`);
+    await writeFile(boxesPath, JSON.stringify({ boxes }, null, 2), "utf8");
+
+    await generateFinalPageFromBoxes(jobId, pageIndex, boxes);
+    res.json({ ok: true, saved: boxes.length });
+  } catch (error) {
+    res.status(500).json({ message: error instanceof Error ? error.message : "Unable to save boxes" });
   }
 });
 

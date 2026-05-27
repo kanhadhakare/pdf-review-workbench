@@ -7,6 +7,18 @@ export enum ExtractionStatus {
 
 export type SemanticTag = "h1" | "h2" | "h3" | "p" | "span" | "caption" | "artifact" | "img";
 
+export type SemanticBoxTag = "p" | "h1" | "h2" | "h3" | "caption" | "img";
+
+export interface SemanticBox {
+  id: string;
+  tag: SemanticBoxTag;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  createdAt: string;
+}
+
 export interface BlockStyles {
   textIndent: number;
   paddingLeft: number;

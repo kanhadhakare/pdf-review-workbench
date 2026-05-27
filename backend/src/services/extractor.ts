@@ -639,6 +639,7 @@ function buildPageArtifacts(jobId: string, extracted: PageExtraction, profile: E
     }
   }
 
+  // Phase 1: word mapping rules are required for correct rendering.
   const reviewCss = `${buildFontFaceCss(browserSafeFonts)}\n\n${commonCss}\n\n${wordRules.join("\n")}`;
   const reviewHtml = buildCombinedReviewHtml(extracted, profile, browserSafeFonts, `../images/page-${pageNumber}.png`, `../style/page-${pageNumber}.css`);
   page.htmlContent = reviewHtml;

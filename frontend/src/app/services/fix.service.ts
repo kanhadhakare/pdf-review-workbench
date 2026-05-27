@@ -1,6 +1,6 @@
 import { HttpClient } from "@angular/common/http";
 import { Injectable, inject } from "@angular/core";
-import { type DraftPageState, type ExtractionProfile, type FixDelta } from "../types";
+import { type DraftPageState, type ExtractionProfile, type FixDelta, type SemanticBox } from "../types";
 import { Observable } from "rxjs";
 
 @Injectable({ providedIn: "root" })
@@ -13,6 +13,14 @@ export class FixService {
 
   recordVisit(jobId: string, pageIndex: number): Observable<unknown> {
     return this.http.post(`/api/jobs/${jobId}/pages/${pageIndex}/visit`, { reviewerId: "local-reviewer" });
+  }
+
+  getBoxes(jobId: string, pageIndex: number): Observable<{ boxes: SemanticBox[] }> {
+    return this.http.get<{ boxes: SemanticBox[] }>(`/api/jobs/${jobId}/pages/${pageIndex}/boxes`);
+  }
+
+  saveBoxes(jobId: string, pageIndex: number, boxes: SemanticBox[]): Observable<{ ok: true; saved: number }> {
+    return this.http.put<{ ok: true; saved: number }>(`/api/jobs/${jobId}/pages/${pageIndex}/boxes`, { boxes });
   }
 
   getDraft(jobId: string, pageIndex: number): Observable<DraftPageState> {

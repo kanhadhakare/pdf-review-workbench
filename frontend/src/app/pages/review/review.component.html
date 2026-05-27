@@ -15,20 +15,48 @@
       <span *ngIf="page()">Confidence: {{ page()!.confidence.toFixed(2) }}</span>
       <span>Edits this page: {{ editCountMap()[pageIndex()] ?? 0 }}</span>
       <span>Total session edits: {{ editSummary()?.totalEdits ?? 0 }}</span>
+      <label class="mode-toggle">
+        <input type="checkbox" [checked]="boxMode()" (change)="boxMode.set(!boxMode())">
+        <span>Box mode</span>
+      </label>
+      <select [ngModel]="activeTag()" (ngModelChange)="activeTag.set($event)" [disabled]="!boxMode()">
+        <option value="p">p</option>
+        <option value="h1">h1</option>
+        <option value="h2">h2</option>
+        <option value="h3">h3</option>
+        <option value="caption">caption</option>
+        <option value="img">img crop</option>
+      </select>
+      <button type="button" (click)="saveBoxes()" [disabled]="!boxMode() || savingBoxes()">{{ savingBoxes() ? 'Saving...' : 'Save Boxes' }}</button>
       <button type="button" (click)="previousPage()" [disabled]="pageIndex() === 0">Previous</button>
       <button type="button" (click)="nextPage()" [disabled]="pageIndex() >= pageCount() - 1">Next</button>
     </header>
 
-    <section class="single-view">
-      <div #editorViewport class="surface surface--single" *ngIf="page() as currentPage">
+    <section class="review-workspace" [class.review-workspace--side-by-side]="boxes().length">
+      <div #editorViewport class="surface surface--single surface--review" *ngIf="page() as currentPage">
+        <div class="pane-title" *ngIf="boxes().length">Review</div>
         <div class="fit-box" [style.width.px]="scaledWidth()" [style.height.px]="scaledHeight()">
-          <iframe
-            class="html-preview"
-            [src]="finalHtmlUrl()"
-            [style.width.px]="currentPage.pageWidth"
-            [style.height.px]="currentPage.pageHeight"
-            [style.transform]="transform()"
-            sandbox="allow-same-origin"></iframe>
+          <div class="frame-stack" [style.width.px]="currentPage.pageWidth" [style.height.px]="currentPage.pageHeight" [style.transform]="transform()">
+            <iframe class="html-preview" [src]="reviewHtmlUrl()" scrolling="no" sandbox="allow-same-origin"></iframe>
+            <div
+              class="box-overlay"
+              [class.is-active]="boxMode()"
+              (mousedown)="overlayMouseDown($event)"
+              (mousemove)="overlayMouseMove($event)"
+              (mouseup)="overlayMouseUp()">
+              <div *ngFor="let b of boxes()" class="saved-box" [class.saved-box--img]="b.tag === 'img'" [style.left.px]="b.x" [style.top.px]="b.y" [style.width.px]="b.w" [style.height.px]="b.h">
+                <span>{{ b.tag }}</span>
+              </div>
+              <div *ngIf="drawingBox() as box" class="draw-box" [style.left.px]="box.x" [style.top.px]="box.y" [style.width.px]="box.w" [style.height.px]="box.h"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="surface surface--single surface--final" *ngIf="boxes().length && page() as currentPage">
+        <div class="pane-title">Final</div>
+        <div class="fit-box" [style.width.px]="scaledWidth()" [style.height.px]="scaledHeight()">
+        <iframe class="html-preview" [src]="finalPreviewUrl()" [style.width.px]="currentPage.pageWidth" [style.height.px]="currentPage.pageHeight" [style.transform]="transform()" scrolling="no" sandbox="allow-same-origin"></iframe>
         </div>
       </div>
     </section>
