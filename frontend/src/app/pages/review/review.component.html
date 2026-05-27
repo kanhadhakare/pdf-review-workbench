@@ -28,6 +28,7 @@
         <option value="img">img crop</option>
       </select>
       <button type="button" (click)="saveBoxes()" [disabled]="!boxMode() || savingBoxes()">{{ savingBoxes() ? 'Saving...' : 'Save Boxes' }}</button>
+      <button type="button" (click)="deleteSelectedBox()" [disabled]="!boxMode() || !selectedBoxId()">Delete Box</button>
       <button type="button" (click)="previousPage()" [disabled]="pageIndex() === 0">Previous</button>
       <button type="button" (click)="nextPage()" [disabled]="pageIndex() >= pageCount() - 1">Next</button>
     </header>
@@ -43,9 +44,23 @@
               [class.is-active]="boxMode()"
               (mousedown)="overlayMouseDown($event)"
               (mousemove)="overlayMouseMove($event)"
-              (mouseup)="overlayMouseUp()">
-              <div *ngFor="let b of boxes()" class="saved-box" [class.saved-box--img]="b.tag === 'img'" [style.left.px]="b.x" [style.top.px]="b.y" [style.width.px]="b.w" [style.height.px]="b.h">
-                <span>{{ b.tag }}</span>
+              (mouseup)="overlayMouseUp($event)">
+              <div
+                *ngFor="let b of boxes(); let i = index"
+                class="saved-box"
+                [class.saved-box--img]="b.tag === 'img'"
+                [class.saved-box--selected]="selectedBoxId() === b.id"
+                [style.left.px]="b.x"
+                [style.top.px]="b.y"
+                [style.width.px]="b.w"
+                [style.height.px]="b.h"
+                (mousedown)="boxMouseDown($event, b)">
+                <span class="saved-box__label">#{{ i + 1 }} {{ b.tag }}</span>
+                <button *ngIf="boxMode()" type="button" class="saved-box__delete" title="Delete box" (mousedown)="$event.stopPropagation()" (click)="deleteBox(b.id)">×</button>
+                <button *ngIf="boxMode()" type="button" class="resize-handle resize-handle--nw" title="Resize" (mousedown)="resizeMouseDown($event, b, 'nw')"></button>
+                <button *ngIf="boxMode()" type="button" class="resize-handle resize-handle--ne" title="Resize" (mousedown)="resizeMouseDown($event, b, 'ne')"></button>
+                <button *ngIf="boxMode()" type="button" class="resize-handle resize-handle--sw" title="Resize" (mousedown)="resizeMouseDown($event, b, 'sw')"></button>
+                <button *ngIf="boxMode()" type="button" class="resize-handle resize-handle--se" title="Resize" (mousedown)="resizeMouseDown($event, b, 'se')"></button>
               </div>
               <div *ngIf="drawingBox() as box" class="draw-box" [style.left.px]="box.x" [style.top.px]="box.y" [style.width.px]="box.w" [style.height.px]="box.h"></div>
             </div>

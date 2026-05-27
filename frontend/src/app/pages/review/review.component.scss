@@ -168,6 +168,8 @@
 .saved-box {
   border-style: solid;
   background: rgba(74, 144, 226, 0.08);
+  cursor: move;
+  pointer-events: auto;
 }
 
 .saved-box--img {
@@ -175,7 +177,12 @@
   background: rgba(245, 166, 35, 0.12);
 }
 
-.saved-box span {
+.saved-box--selected {
+  border-color: #7fdbff;
+  box-shadow: 0 0 0 2px rgba(127, 219, 255, 0.32), 0 0 16px rgba(127, 219, 255, 0.18);
+}
+
+.saved-box__label {
   position: absolute;
   top: -18px;
   left: 0;
@@ -183,6 +190,61 @@
   padding: 2px 6px;
   background: rgba(0, 0, 0, 0.6);
   color: #fff;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.saved-box__delete,
+.resize-handle {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  background: rgba(10, 14, 21, 0.92);
+  color: #fff;
+  pointer-events: auto;
+}
+
+.saved-box__delete {
+  top: -18px;
+  right: -1px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.resize-handle {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.resize-handle--nw {
+  top: -5px;
+  left: -5px;
+  cursor: nwse-resize;
+}
+
+.resize-handle--ne {
+  top: -5px;
+  right: -5px;
+  cursor: nesw-resize;
+}
+
+.resize-handle--sw {
+  bottom: -5px;
+  left: -5px;
+  cursor: nesw-resize;
+}
+
+.resize-handle--se {
+  right: -5px;
+  bottom: -5px;
+  cursor: nwse-resize;
 }
 
 img {

@@ -9,6 +9,12 @@ import { DomSanitizer, type SafeResourceUrl } from "@angular/platform-browser";
 import { FixService } from "../../services/fix.service";
 import { type SemanticBox, type SemanticBoxTag } from "../../types";
 
+type ResizeHandle = "nw" | "ne" | "sw" | "se";
+
+type BoxInteraction =
+  | { type: "move"; boxId: string; startClientX: number; startClientY: number; original: SemanticBox }
+  | { type: "resize"; boxId: string; handle: ResizeHandle; startClientX: number; startClientY: number; original: SemanticBox };
+
 @Component({
   selector: "app-review-page",
   standalone: true,
@@ -41,6 +47,8 @@ export class ReviewComponent {
   readonly boxes = signal<SemanticBox[]>([]);
   readonly activeTag = signal<SemanticBoxTag>("p");
   readonly drawingBox = signal<{ startX: number; startY: number; x: number; y: number; w: number; h: number } | null>(null);
+  readonly selectedBoxId = signal<string | null>(null);
+  readonly boxInteraction = signal<BoxInteraction | null>(null);
   readonly savingBoxes = signal(false);
   readonly finalRefreshToken = signal(0);
 
@@ -100,8 +108,54 @@ export class ReviewComponent {
 
   @HostListener("window:keydown", ["$event"])
   onKeydown(event: KeyboardEvent): void {
+    if (this.isEditableEventTarget(event.target)) return;
+
+    const selectedBoxId = this.selectedBoxId();
+    if (this.boxMode() && selectedBoxId) {
+      if (event.key === "Backspace" || event.key === "Delete") {
+        event.preventDefault();
+        this.deleteBox(selectedBoxId);
+        return;
+      }
+
+      const step = event.shiftKey ? 10 : 1;
+      const movement: Record<string, { x: number; y: number }> = {
+        ArrowLeft: { x: -step, y: 0 },
+        ArrowRight: { x: step, y: 0 },
+        ArrowUp: { x: 0, y: -step },
+        ArrowDown: { x: 0, y: step }
+      };
+      const delta = movement[event.key];
+      if (delta) {
+        event.preventDefault();
+        this.moveSelectedBox(delta.x, delta.y);
+        return;
+      }
+    }
+
     if (event.key === "ArrowLeft") this.previousPage();
     if (event.key === "ArrowRight") this.nextPage();
+  }
+
+  @HostListener("window:mousemove", ["$event"])
+  onWindowMouseMove(event: MouseEvent): void {
+    const interaction = this.boxInteraction();
+    if (!interaction) return;
+    event.preventDefault();
+    const scale = this.pageScale();
+    const dx = (event.clientX - interaction.startClientX) / scale;
+    const dy = (event.clientY - interaction.startClientY) / scale;
+    const nextBox =
+      interaction.type === "move"
+        ? this.clampBox({ ...interaction.original, x: interaction.original.x + dx, y: interaction.original.y + dy })
+        : this.resizeBox(interaction.original, interaction.handle, dx, dy);
+    this.updateBox(interaction.boxId, nextBox);
+  }
+
+  @HostListener("window:mouseup")
+  onWindowMouseUp(): void {
+    if (this.drawingBox()) this.finishDrawingBox();
+    this.boxInteraction.set(null);
   }
 
   transform(): string { return `scale(${this.pageScale()})`; }
@@ -119,6 +173,9 @@ export class ReviewComponent {
 
   private loadPage(index: number): void {
     this.loading.set(`Loading page ${index + 1}...`);
+    this.selectedBoxId.set(null);
+    this.boxInteraction.set(null);
+    this.drawingBox.set(null);
     this.jobs.getResumeInfo(this.jobId()).subscribe({
       next: (resume) => this.draftPageMap.set(Object.fromEntries((resume.draftPageIndices ?? []).map((value) => [value, true]))),
       error: () => void 0
@@ -129,7 +186,7 @@ export class ReviewComponent {
         this.confidenceMap.update((current) => ({ ...current, [page.pageIndex]: page.confidence }));
         this.loading.set("");
         this.fixes.getBoxes(this.jobId(), index).subscribe({
-          next: ({ boxes }) => this.boxes.set(Array.isArray(boxes) ? boxes : []),
+          next: ({ boxes }) => this.boxes.set(Array.isArray(boxes) ? this.orderBoxes(boxes) : []),
           error: () => this.boxes.set([])
         });
         queueMicrotask(() => this.updateScale());
@@ -165,11 +222,45 @@ export class ReviewComponent {
     this.drawingBox.set({ ...current, x: nextX, y: nextY, w: Math.abs(x - current.startX), h: Math.abs(y - current.startY) });
   }
 
-  overlayMouseUp(): void {
+  overlayMouseUp(event: MouseEvent): void {
+    event.preventDefault();
+    this.finishDrawingBox();
+  }
+
+  boxMouseDown(event: MouseEvent, box: SemanticBox): void {
+    if (!this.boxMode()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.selectedBoxId.set(box.id);
+    this.boxInteraction.set({ type: "move", boxId: box.id, startClientX: event.clientX, startClientY: event.clientY, original: { ...box } });
+  }
+
+  resizeMouseDown(event: MouseEvent, box: SemanticBox, handle: ResizeHandle): void {
+    if (!this.boxMode()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.selectedBoxId.set(box.id);
+    this.boxInteraction.set({ type: "resize", boxId: box.id, handle, startClientX: event.clientX, startClientY: event.clientY, original: { ...box } });
+  }
+
+  deleteBox(boxId: string): void {
+    this.boxes.update((existing) => existing.filter((box) => box.id !== boxId));
+    if (this.selectedBoxId() === boxId) this.selectedBoxId.set(null);
+    const interaction = this.boxInteraction();
+    if (interaction?.boxId === boxId) this.boxInteraction.set(null);
+  }
+
+  deleteSelectedBox(): void {
+    const selectedBoxId = this.selectedBoxId();
+    if (!selectedBoxId) return;
+    this.deleteBox(selectedBoxId);
+  }
+
+  private finishDrawingBox(): void {
     const current = this.drawingBox();
     if (!current) return;
     const tag = this.activeTag();
-    const box: SemanticBox = {
+    const box = this.clampBox({
       id: crypto.randomUUID(),
       tag,
       x: Number(current.x.toFixed(2)),
@@ -177,9 +268,10 @@ export class ReviewComponent {
       w: Number(current.w.toFixed(2)),
       h: Number(current.h.toFixed(2)),
       createdAt: new Date().toISOString()
-    };
+    });
     if (box.w > 2 && box.h > 2) {
       this.boxes.update((existing) => [...existing, box]);
+      this.selectedBoxId.set(box.id);
     }
     this.drawingBox.set(null);
   }
@@ -210,6 +302,78 @@ export class ReviewComponent {
     const heightScale = Math.min(...heightCandidates);
     this.pageScale.set(Number(Math.max(0.01, Math.min(1, widthScale, heightScale)).toFixed(4)));
     this.htmlScale.set(this.pageScale());
+  }
+
+  private moveSelectedBox(dx: number, dy: number): void {
+    const selectedBoxId = this.selectedBoxId();
+    if (!selectedBoxId) return;
+    const box = this.boxes().find((candidate) => candidate.id === selectedBoxId);
+    if (!box) return;
+    this.updateBox(selectedBoxId, this.clampBox({ ...box, x: box.x + dx, y: box.y + dy }));
+  }
+
+  private updateBox(boxId: string, nextBox: SemanticBox): void {
+    this.boxes.update((existing) => existing.map((box) => (box.id === boxId ? nextBox : box)));
+  }
+
+  private resizeBox(box: SemanticBox, handle: ResizeHandle, dx: number, dy: number): SemanticBox {
+    const page = this.page();
+    const pageWidth = page?.pageWidth ?? Number.POSITIVE_INFINITY;
+    const pageHeight = page?.pageHeight ?? Number.POSITIVE_INFINITY;
+    const minSize = 4;
+    const right = box.x + box.w;
+    const bottom = box.y + box.h;
+    let x = box.x;
+    let y = box.y;
+    let width = box.w;
+    let height = box.h;
+
+    if (handle.includes("n")) {
+      y = Math.max(0, Math.min(box.y + dy, bottom - minSize));
+      height = bottom - y;
+    }
+    if (handle.includes("s")) height = Math.max(minSize, Math.min(box.h + dy, pageHeight - box.y));
+    if (handle.includes("w")) {
+      x = Math.max(0, Math.min(box.x + dx, right - minSize));
+      width = right - x;
+    }
+    if (handle.includes("e")) width = Math.max(minSize, Math.min(box.w + dx, pageWidth - box.x));
+
+    return {
+      ...box,
+      x: Number(x.toFixed(2)),
+      y: Number(y.toFixed(2)),
+      w: Number(width.toFixed(2)),
+      h: Number(height.toFixed(2))
+    };
+  }
+
+  private clampBox(box: SemanticBox): SemanticBox {
+    const page = this.page();
+    const pageWidth = page?.pageWidth ?? Number.POSITIVE_INFINITY;
+    const pageHeight = page?.pageHeight ?? Number.POSITIVE_INFINITY;
+    const minSize = 4;
+    const width = Math.max(minSize, Math.min(box.w, pageWidth));
+    const height = Math.max(minSize, Math.min(box.h, pageHeight));
+    const x = Math.max(0, Math.min(box.x, pageWidth - width));
+    const y = Math.max(0, Math.min(box.y, pageHeight - height));
+    return {
+      ...box,
+      x: Number(x.toFixed(2)),
+      y: Number(y.toFixed(2)),
+      w: Number(width.toFixed(2)),
+      h: Number(height.toFixed(2))
+    };
+  }
+
+  private isEditableEventTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) return false;
+    const tagName = target.tagName.toLowerCase();
+    return target.isContentEditable || tagName === "input" || tagName === "textarea" || tagName === "select";
+  }
+
+  private orderBoxes(boxes: SemanticBox[]): SemanticBox[] {
+    return [...boxes].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
   }
 }
 
