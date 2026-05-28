@@ -36,6 +36,8 @@ export const trainerScriptPath = resolvePath(process.env.TRAINER_SCRIPT ?? path.
 export const pdfboxJarPath = resolvePath(process.env.PDFBOX_FONT_EXTRACTOR_JAR ?? path.join(backendRoot, "tools", "pdfbox-font-extractor", "target", "pdfbox-font-extractor.jar"));
 
 export const serverPort = Number.parseInt(process.env.PORT ?? "3000", 10) || 3000;
+export const extractionPageConcurrency = Math.max(1, Number.parseInt(process.env.EXTRACT_PAGE_CONCURRENCY ?? "1", 10) || 1);
+export const extractionMaxDpi = Math.max(72, Number.parseInt(process.env.EXTRACT_MAX_DPI ?? "120", 10) || 120);
 
 export function getCorsOrigins(): string[] {
   const configured = splitCommaList(process.env.CORS_ORIGIN);

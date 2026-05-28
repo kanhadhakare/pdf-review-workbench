@@ -11,6 +11,8 @@ services:
       JAVA_BIN: "/usr/bin/java"
       PYTHON_BIN: "/usr/bin/python3"
       PDF_ALLOWED_ROOTS: "/app/storage/uploads:/data/pdfs"
+      EXTRACT_PAGE_CONCURRENCY: "1"
+      EXTRACT_MAX_DPI: "120"
     volumes:
       # Must be a host *directory* (not a file). Run compose from the repo root (E:\\pdf-review-workbench).
       - ./storage:/app/storage

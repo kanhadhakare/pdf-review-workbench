@@ -7,6 +7,7 @@ import { jobStore, type StoredJobState } from "./jobStore.js";
 import { extractFontsWithPdfBox } from "./pdfboxFontService.js";
 import { validatePage } from "./validator.js";
 import { isPdf2HtmlExEnabled, runPdf2HtmlEx, validatePdf2HtmlExOutput } from "./pdf2htmlExService.js";
+import { extractionMaxDpi, extractionPageConcurrency } from "../config/runtime.js";
 
 type MuPdfModule = typeof import("mupdf");
 type MuPdfPdfDocument = import("mupdf").PDFDocument;
@@ -359,9 +360,10 @@ async function extractWithMuPdf(filePath: string, profile: ExtractionProfile, dp
   const pdfBytes = await readFile(filePath);
   const document = mupdf.Document.openDocument(pdfBytes, "application/pdf");
   const pageCount = document.countPages();
-  const scale = Math.min(200, Math.max(72, dpi)) / 72;
+  const safeDpi = Math.min(extractionMaxDpi, Math.max(72, dpi));
+  const scale = Math.min(200, safeDpi) / 72;
   const matrix = mupdf.Matrix.scale(scale, scale);
-  const limit = pLimit(4);
+  const limit = pLimit(extractionPageConcurrency);
   return Promise.all(Array.from({ length: pageCount }, (_, pageIndex) => limit(async () => {
     const page = document.loadPage(pageIndex);
     const bounds = page.getBounds() as [number, number, number, number];
