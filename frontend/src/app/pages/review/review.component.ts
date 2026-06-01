@@ -51,6 +51,8 @@ export class ReviewComponent {
   readonly boxInteraction = signal<BoxInteraction | null>(null);
   readonly savingBoxes = signal(false);
   readonly finalRefreshToken = signal(0);
+  readonly showFinalPane = signal(false);
+  readonly showPageNav = signal(true);
 
   readonly reviewHtmlUrl = computed<SafeResourceUrl>(() => {
     const page = this.page();
@@ -62,11 +64,10 @@ export class ReviewComponent {
   readonly finalPreviewUrl = computed<SafeResourceUrl>(() => {
     const page = this.page();
     if (!page) return this.sanitizer.bypassSecurityTrustResourceUrl("about:blank");
-    const pageNumber = page.pageIndex + 1;
     const token = this.finalRefreshToken();
-    return this.sanitizer.bypassSecurityTrustResourceUrl(`/storage/jobs/${this.jobId()}/final/page-${pageNumber}.html?v=${token}`);
+    return this.sanitizer.bypassSecurityTrustResourceUrl(`${this.finalPageUrl(page.pageIndex)}?v=${token}`);
   });
-
+ 
   constructor() {
     this.jobs.getResumeInfo(this.jobId()).subscribe({
       next: (resume) => {
@@ -166,6 +167,13 @@ export class ReviewComponent {
     void summary;
   }
 
+  openFinalOutput(): void {
+    const page = this.page();
+    if (!page) return;
+    this.finalRefreshToken.update((value) => value + 1);
+    window.open(`${this.finalPageUrl(page.pageIndex)}?v=${Date.now()}`, "_blank", "noopener,noreferrer");
+  }
+
   handleFixesSaved(summary: JobEditSummary): void {
     this.editSummary.set(summary);
     this.editCountMap.set({ ...summary.editsByPage });
@@ -193,6 +201,10 @@ export class ReviewComponent {
       },
       error: () => this.loading.set("Unable to load page.")
     });
+  }
+
+  private finalPageUrl(pageIndex: number): string {
+    return `/storage/jobs/${this.jobId()}/final/page-${pageIndex + 1}.html`;
   }
 
   overlayMouseDown(event: MouseEvent): void {
@@ -376,5 +388,3 @@ export class ReviewComponent {
     return [...boxes].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
   }
 }
-
-

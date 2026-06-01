@@ -151,6 +151,10 @@ jobsRouter.get("/:id/final.zip", async (req, res) => {
     const archive = await buildFinalArchive(req.params.id);
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", `attachment; filename="${archive.fileName}"`);
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    res.setHeader("X-Final-Archive-Generated-At", new Date().toISOString());
     res.send(archive.buffer);
   } catch (error) {
     res.status(error instanceof Error && error.message === "Job not found" ? 404 : 500).json({

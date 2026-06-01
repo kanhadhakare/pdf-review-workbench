@@ -5,9 +5,11 @@ import { ExtractionStatus, type ClassifierResult, type ExtractedFontAsset, type 
 import { classifyBlocks } from "./classifier.js";
 import { jobStore, type StoredJobState } from "./jobStore.js";
 import { extractFontsWithPdfBox } from "./pdfboxFontService.js";
+import { convertManifestFontsForWeb } from "./fontConversionService.js";
 import { validatePage } from "./validator.js";
 import { isPdf2HtmlExEnabled, runPdf2HtmlEx, validatePdf2HtmlExOutput } from "./pdf2htmlExService.js";
 import { extractionMaxDpi, extractionPageConcurrency } from "../config/runtime.js";
+import { normalizePdfText } from "./textNormalizer.js";
 
 type MuPdfModule = typeof import("mupdf");
 type MuPdfPdfDocument = import("mupdf").PDFDocument;
@@ -39,6 +41,9 @@ interface StructuredPageJson {
       bbox?: { x: number; y: number; w: number; h: number };
       font?: { size?: number; name?: string };
       text?: string;
+      x?: number;
+      y?: number;
+      wmode?: number;
     }>;
   }>;
 }
@@ -54,23 +59,15 @@ async function importMuPdf(): Promise<MuPdfModule | null> {
 }
 
 function normalizeText(text: string, profile: ExtractionProfile): string {
-  let value = text
-    .replace(/Ã‚Â»/g, "»")
-    .replace(/Ã¢â‚¬Â/g, "”")
-    .replace(/Ã¢â‚¬Å“/g, "“")
-    .replace(/Ã¢â‚¬â„¢/g, "’")
-    .replace(/Ã¢â‚¬â€œ/g, "–")
-    .replace(/Ã¢â‚¬â€/g, "—")
-    .replace(/Ã¯Â¿Â½/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  for (const [source, target] of Object.entries(profile.encodingMap)) {
-    value = value.split(source).join(target);
+  const result = normalizePdfText(text, profile);
+  if (result.warnings.length) {
+    console.warn("[extractor] suspicious PDF text", {
+      input: text,
+      output: result.text,
+      warnings: result.warnings
+    });
   }
-  if (/^(?:[A-Z0-9]\s+){2,}[A-Z0-9]$/.test(value)) {
-    value = value.replace(/\s+/g, "");
-  }
-  return value;
+  return result.text;
 }
 
 function escapeHtml(value: string): string {
@@ -143,6 +140,20 @@ function decodeHtmlEntities(value: string): string {
 }
 
 type HtmlSpanRun = { text: string; color: string | null; x: number | null; y: number | null };
+type RotationHint = { text: string; x: number; y: number; rotation: number };
+type ReviewWord = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  text: string;
+  fontSize: number;
+  fontName: string;
+  fontWeight: "normal" | "bold";
+  fontStyle: "normal" | "italic";
+  fontColor: string;
+  rotation?: number;
+};
 
 function parseHtmlSpanRuns(html: string): HtmlSpanRun[] {
   // MuPDF structured HTML is typically: <p style="top:..;left:.."><span style="...color:...">TEXT</span></p>
@@ -174,6 +185,125 @@ function parseHtmlSpanRuns(html: string): HtmlSpanRun[] {
   return runs;
 }
 
+function normalizeRotationAngle(angle: number): number {
+  let normalized = ((angle % 360) + 360) % 360;
+  if (normalized > 180) normalized -= 360;
+  if (Math.abs(normalized) < 3) return 0;
+  if (Math.abs(normalized - 90) < 3) return 90;
+  if (Math.abs(normalized + 90) < 3) return -90;
+  if (Math.abs(Math.abs(normalized) - 180) < 3) return 180;
+  return Number(normalized.toFixed(2));
+}
+
+function rotationFromQuad(quad: number[]): number {
+  if (quad.length < 4) return 0;
+  const dx = quad[2] - quad[0];
+  const dy = quad[3] - quad[1];
+  if (Math.hypot(dx, dy) < 0.01) return 0;
+  return normalizeRotationAngle((Math.atan2(dy, dx) * 180) / Math.PI);
+}
+
+function pointFromValue(value: unknown): [number, number] | null {
+  if (Array.isArray(value) && value.length >= 2 && Number.isFinite(Number(value[0])) && Number.isFinite(Number(value[1]))) {
+    return [Number(value[0]), Number(value[1])];
+  }
+  if (value && typeof value === "object" && "x" in value && "y" in value) {
+    const point = value as { x?: unknown; y?: unknown };
+    if (Number.isFinite(Number(point.x)) && Number.isFinite(Number(point.y))) {
+      return [Number(point.x), Number(point.y)];
+    }
+  }
+  return null;
+}
+
+function quadFromValue(value: unknown): number[] | null {
+  if (!Array.isArray(value)) return null;
+  const flattened = value.flatMap((entry) => Array.isArray(entry) ? entry : [entry]).map(Number);
+  return flattened.length >= 8 && flattened.every(Number.isFinite) ? flattened : null;
+}
+
+function collectRotationHints(structured: unknown): RotationHint[] {
+  const hints: RotationHint[] = [];
+  const walker = structured as { walk?: (handlers: { onChar?: (...args: unknown[]) => void }) => void };
+  if (typeof walker.walk !== "function") return hints;
+  try {
+    walker.walk({
+      onChar: (...args: unknown[]) => {
+        const text = String(args[0] ?? "");
+        if (!text.trim()) return;
+        const origin = pointFromValue(args[1]);
+        const quad = args.map(quadFromValue).find((value): value is number[] => Boolean(value));
+        if (!origin || !quad) return;
+        const rotation = rotationFromQuad(quad);
+        if (rotation === 0) return;
+        hints.push({ text, x: origin[0], y: origin[1], rotation });
+      }
+    });
+  } catch (error) {
+    console.warn("[extractor] failed to inspect MuPDF character rotation:", error);
+  }
+  return hints;
+}
+
+function findLineRotation(hints: RotationHint[], rawText: string, x?: number, y?: number): number | undefined {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return undefined;
+  const firstChar = rawText.match(/\S/u)?.[0];
+  if (!firstChar) return undefined;
+  const direct = hints.find((hint) => hint.text === firstChar && Math.abs(hint.x - Number(x)) <= 2 && Math.abs(hint.y - Number(y)) <= 2);
+  return direct?.rotation;
+}
+
+function isRotated(rotation?: number): boolean {
+  return typeof rotation === "number" && Math.abs(rotation) > 0.01;
+}
+
+function createReviewWords(span: ExtractorSpan): ReviewWord[] {
+  const fontColor = sanitizeColor(span.fontColor ?? "#000000");
+  const base = {
+    fontSize: span.fontSize,
+    fontName: span.fontName,
+    fontWeight: span.fontWeight,
+    fontStyle: detectFontStyle(span.fontName),
+    fontColor,
+    rotation: span.rotation
+  };
+  if (isRotated(span.rotation)) {
+    const text = span.text.trim();
+    return text ? [{
+      x: Number(span.x.toFixed(2)),
+      y: Number(span.y.toFixed(2)),
+      w: Number(span.w.toFixed(2)),
+      h: Number(span.h.toFixed(2)),
+      text,
+      ...base
+    }] : [];
+  }
+  const matches = [...span.text.matchAll(/\S+/g)];
+  const unit = span.text.length > 0 ? span.w / span.text.length : span.w;
+  return matches.map((match) => {
+    const text = match[0];
+    const start = match.index ?? 0;
+    const x = span.x + (start * unit);
+    const w = Math.max(2, text.length * unit);
+    return {
+      x: Number(x.toFixed(2)),
+      y: Number(span.y.toFixed(2)),
+      w: Number(w.toFixed(2)),
+      h: Number(span.h.toFixed(2)),
+      text,
+      ...base
+    };
+  });
+}
+
+function cssBoxForRotation(word: ReviewWord): { left: number; top: number; width: number; height: number } {
+  const rotation = normalizeRotationAngle(word.rotation ?? 0);
+  if (rotation === -90) return { left: word.x, top: word.y + word.h, width: word.h, height: word.w };
+  if (rotation === 90) return { left: word.x + word.w, top: word.y, width: word.h, height: word.w };
+  if (rotation === 180) return { left: word.x + word.w, top: word.y + word.h, width: word.w, height: word.h };
+  return { left: word.x, top: word.y, width: word.w, height: word.h };
+}
+
 function getFontStreamExtension(fontStream: any): string {
   const subtype = fontStream.get("Subtype")?.asName?.()?.toLowerCase?.();
   if (subtype === "truetype") return "ttf";
@@ -203,18 +333,38 @@ function getCssFontFormat(format: ExtractedFontAsset["format"]): string {
   return format === "unknown" ? "opentype" : format;
 }
 
+function fontSourcePriority(format: ExtractedFontAsset["format"]): number {
+  if (format === "woff2") return 0;
+  if (format === "woff") return 1;
+  if (format === "truetype") return 2;
+  if (format === "opentype" || format === "type1") return 3;
+  return 4;
+}
+
 function isBrowserSafeFontFormat(format: ExtractedFontAsset["format"]): boolean {
   // pdfbox extractor may emit Type1 fonts as .otf files; browsers can still load them as OpenType.
   return format === "truetype" || format === "opentype" || format === "type1" || format === "woff" || format === "woff2";
 }
 
 function buildFontFaceCss(fontAssets: ExtractedFontAsset[]): string {
-  return fontAssets.map((font) => `@font-face {
-  font-family: "${sanitizeFontFamily(font.family)}";
-  src: url("../fonts/${font.fileName}") format("${getCssFontFormat(font.format)}");
-  font-weight: ${font.fontWeight};
-  font-style: ${font.fontStyle};
-}`).join("\n\n");
+  const grouped = new Map<string, ExtractedFontAsset[]>();
+  for (const font of fontAssets) {
+    const key = [sanitizeFontFamily(font.family), font.fontWeight, font.fontStyle].join("\u0000");
+    grouped.set(key, [...(grouped.get(key) ?? []), font]);
+  }
+  return [...grouped.values()].map((fonts) => {
+    const primary = fonts[0];
+    const sources = [...fonts]
+      .sort((a, b) => fontSourcePriority(a.format) - fontSourcePriority(b.format))
+      .map((font) => `url("../fonts/${font.fileName}") format("${getCssFontFormat(font.format)}")`)
+      .join(",\n    ");
+    return `@font-face {
+  font-family: "${sanitizeFontFamily(primary.family)}";
+  src: ${sources};
+  font-weight: ${primary.fontWeight};
+  font-style: ${primary.fontStyle};
+}`;
+  }).join("\n\n");
 }
 
 function resolveCssFontFamily(fontName: string, fontAssets: ExtractedFontAsset[]): string {
@@ -265,14 +415,15 @@ function mergeSpans(spans: ExtractorSpan[], profile: ExtractionProfile, leftMarg
       const prevLastRaw = previous.rawSpans[previous.rawSpans.length - 1];
       const gap = span.x - (previous.x + previous.w);
       const fontCompatible = Math.abs(previous.fontSize - span.fontSize) <= 1 && previous.fontName === span.fontName;
-      const shouldMerge = Math.abs(prevLastRaw.y - span.y) <= profile.yBandTolerance && fontCompatible && gap <= profile.xGapTolerance && gap >= -1;
+      const rotationCompatible = (prevLastRaw.rotation ?? 0) === (span.rotation ?? 0);
+      const shouldMerge = Math.abs(prevLastRaw.y - span.y) <= profile.yBandTolerance && fontCompatible && rotationCompatible && gap <= profile.xGapTolerance && gap >= -1;
       const indentGuard = isIndented && previous.y < span.y && Math.abs(previous.x - span.x) > 2;
       if (shouldMerge && !indentGuard) {
         const lettersOnly = /^[A-Z0-9]+$/.test(previous.text.replace(/\s+/g, "")) && /^[A-Z0-9]+$/.test(normalized.replace(/\s+/g, ""));
         previous.text = `${previous.text}${gap > 3 && !lettersOnly ? " " : ""}${normalized}`;
         previous.w = Math.max(previous.w, (span.x + span.w) - previous.x);
         previous.h = Math.max(previous.h, span.h);
-        previous.rawSpans.push({ x: span.x, y: span.y, w: span.w, h: span.h, text: normalized, fontSize: span.fontSize, fontName: span.fontName, fontColor: span.fontColor });
+        previous.rawSpans.push({ x: span.x, y: span.y, w: span.w, h: span.h, text: normalized, fontSize: span.fontSize, fontName: span.fontName, fontColor: span.fontColor, rotation: span.rotation });
         continue;
       }
     }
@@ -293,7 +444,7 @@ function mergeSpans(spans: ExtractorSpan[], profile: ExtractionProfile, leftMarg
       pageIndex: span.pageIndex,
       styles: defaultStyles(textIndent),
       isFirstLineIndented: isIndented,
-      rawSpans: [{ x: span.x, y: span.y, w: span.w, h: span.h, text: normalized, fontSize: span.fontSize, fontName: span.fontName, fontColor: span.fontColor }]
+      rawSpans: [{ x: span.x, y: span.y, w: span.w, h: span.h, text: normalized, fontSize: span.fontSize, fontName: span.fontName, fontColor: span.fontColor, rotation: span.rotation }]
     });
   }
   return blocks;
@@ -374,6 +525,7 @@ async function extractWithMuPdf(filePath: string, profile: ExtractionProfile, dp
     const structured = page.toStructuredText("preserve-whitespace,preserve-spans");
     const html = structured.asHTML(0);
     const htmlRuns = parseHtmlSpanRuns(html);
+    const rotationHints = collectRotationHints(structured);
     let runIndex = 0;
     const json = JSON.parse(structured.asJSON(1)) as StructuredPageJson;
     const spans: ExtractorSpan[] = [];
@@ -406,6 +558,7 @@ async function extractWithMuPdf(filePath: string, profile: ExtractionProfile, dp
           }
         }
         if (rawColor === null && bestFallback) rawColor = bestFallback.color;
+        const rotation = findLineRotation(rotationHints, line.text ?? "", line.x, line.y);
         spans.push({
           x: (bbox.x * scale) + profile.coordOffsetX,
           y: (bbox.y * scale) + profile.coordOffsetY,
@@ -415,6 +568,7 @@ async function extractWithMuPdf(filePath: string, profile: ExtractionProfile, dp
           fontSize: line.font?.size ?? bbox.h ?? 12,
           fontName,
           fontColor: sanitizeColor(rawColor ?? "#000000"),
+          rotation,
           pageIndex,
           fontWeight: /bold|black|heavy/i.test(fontName) ? "bold" : "normal"
         });
@@ -521,7 +675,7 @@ async function extractPages(filePath: string, profile: ExtractionProfile, dpi: n
     try {
       const fallbackFonts = await extractFontsFromMuPdf(filePath, jobId);
       if (fallbackFonts.length > 0) {
-        fontManifest = buildMuPdfFallbackManifest(filePath, fallbackFonts);
+        fontManifest = await convertManifestFontsForWeb(jobId, buildMuPdfFallbackManifest(filePath, fallbackFonts));
         await jobStore.saveFontManifest(jobId, fontManifest);
       }
     } catch (error) {
@@ -557,40 +711,10 @@ function buildCombinedReviewCss(extracted: PageExtraction, profile: ExtractionPr
 }
 
 function buildCombinedReviewHtml(extracted: PageExtraction, profile: ExtractionProfile, fontAssets: ExtractedFontAsset[], imageHref: string, cssHref: string): string {
-  const words: Array<{
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-    text: string;
-    fontSize: number;
-    fontName: string;
-    fontWeight: "normal" | "bold";
-    fontStyle: "normal" | "italic";
-    fontColor: string;
-  }> = [];
+  const words: ReviewWord[] = [];
 
   for (const span of extracted.spans) {
-    const matches = [...span.text.matchAll(/\S+/g)];
-    const unit = span.text.length > 0 ? span.w / span.text.length : span.w;
-    for (const match of matches) {
-      const text = match[0];
-      const start = match.index ?? 0;
-      const x = span.x + (start * unit);
-      const w = Math.max(2, text.length * unit);
-      words.push({
-        x: Number(x.toFixed(2)),
-        y: Number(span.y.toFixed(2)),
-        w: Number(w.toFixed(2)),
-        h: Number(span.h.toFixed(2)),
-        text,
-        fontSize: span.fontSize,
-        fontName: span.fontName,
-        fontWeight: span.fontWeight,
-        fontStyle: detectFontStyle(span.fontName),
-        fontColor: sanitizeColor(span.fontColor ?? "#000000")
-      });
-    }
+    words.push(...createReviewWords(span));
   }
 
   const elements = words
@@ -625,18 +749,14 @@ function buildPageArtifacts(jobId: string, extracted: PageExtraction, profile: E
   // Recreate the same word split used by the HTML generator so CSS indices match.
   let wordIndex = 0;
   for (const span of extracted.spans) {
-    const matches = [...span.text.matchAll(/\S+/g)];
-    const unit = span.text.length > 0 ? span.w / span.text.length : span.w;
-    for (const match of matches) {
-      const text = match[0];
-      const start = match.index ?? 0;
-      const x = span.x + (start * unit);
-      const w = Math.max(2, text.length * unit);
+    for (const word of createReviewWords(span)) {
       const family = resolveCssFontFamily(span.fontName, browserSafeFonts);
       const fontStyle = detectFontStyle(span.fontName);
       const fontSizePx = Number((span.fontSize * extracted.scale).toFixed(3));
       const color = sanitizeColor(span.fontColor ?? "#000000");
-      wordRules.push(`.page${pageNumber}__word${wordIndex} { left: ${Number(x.toFixed(2))}px; top: ${Number(span.y.toFixed(2))}px; width: ${Number(w.toFixed(2))}px; height: ${Number(span.h.toFixed(2))}px; font-size: ${fontSizePx}px; font-family: ${cssSingleQuoted(family)}, serif; font-weight: ${span.fontWeight}; font-style: ${fontStyle}; color: ${color}; }`);
+      const box = cssBoxForRotation(word);
+      const transformCss = isRotated(word.rotation) ? ` transform-origin: top left; transform: rotate(${normalizeRotationAngle(word.rotation ?? 0)}deg);` : "";
+      wordRules.push(`.page${pageNumber}__word${wordIndex} { left: ${Number(box.left.toFixed(2))}px; top: ${Number(box.top.toFixed(2))}px; width: ${Number(box.width.toFixed(2))}px; height: ${Number(box.height.toFixed(2))}px; font-size: ${fontSizePx}px; font-family: ${cssSingleQuoted(family)}, serif; font-weight: ${span.fontWeight}; font-style: ${fontStyle}; color: ${color};${transformCss} }`);
       wordIndex += 1;
     }
   }

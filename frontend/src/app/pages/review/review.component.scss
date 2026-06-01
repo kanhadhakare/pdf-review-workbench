@@ -5,6 +5,10 @@
   background: linear-gradient(180deg, #0c1016 0%, #10151d 100%);
 }
 
+.review-page--nav-hidden {
+  grid-template-columns: 1fr;
+}
+
 .review-page__nav {
   border-right: 1px solid var(--border);
   background: linear-gradient(180deg, #0e1420, #0c121c);

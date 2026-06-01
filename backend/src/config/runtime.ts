@@ -34,10 +34,12 @@ export const uploadsStorageRoot = path.join(storageRoot, "uploads");
 export const ocrScriptPath = resolvePath(process.env.OCR_SCRIPT ?? path.join(backendRoot, "src", "scripts", "paddle_ocr_runner.py"));
 export const trainerScriptPath = resolvePath(process.env.TRAINER_SCRIPT ?? path.join(backendRoot, "src", "scripts", "train_classifiers.py"));
 export const pdfboxJarPath = resolvePath(process.env.PDFBOX_FONT_EXTRACTOR_JAR ?? path.join(backendRoot, "tools", "pdfbox-font-extractor", "target", "pdfbox-font-extractor.jar"));
+export const fontForgeScriptDir = resolvePath(process.env.FONTFORGE_SCRIPT_DIR ?? path.join(storageRoot, "fontforge"));
 
 export const serverPort = Number.parseInt(process.env.PORT ?? "3000", 10) || 3000;
 export const extractionPageConcurrency = Math.max(1, Number.parseInt(process.env.EXTRACT_PAGE_CONCURRENCY ?? "1", 10) || 1);
-export const extractionMaxDpi = Math.max(72, Number.parseInt(process.env.EXTRACT_MAX_DPI ?? "120", 10) || 120);
+export const extractionMaxDpi = Math.max(72, Number.parseInt(process.env.EXTRACT_MAX_DPI ?? "150", 10) || 150);
+export const finalOutputDpi = Math.max(72, Number.parseInt(process.env.FINAL_OUTPUT_DPI ?? "200", 10) || 200);
 
 export function getCorsOrigins(): string[] {
   const configured = splitCommaList(process.env.CORS_ORIGIN);
@@ -72,5 +74,16 @@ export function tesseractCommandCandidates(): string[] {
     isWindows ? "C:/Program Files/Tesseract-OCR/tesseract.exe" : "/usr/bin/tesseract",
     isWindows ? "C:/Program Files (x86)/Tesseract-OCR/tesseract.exe" : "/usr/local/bin/tesseract",
     isWindows ? "C:/Users/Diva/AppData/Local/Programs/Tesseract-OCR/tesseract.exe" : null
+  ]);
+}
+
+export function fontForgeCommandCandidates(): string[] {
+  return unique([
+    process.env.FONTFORGE_BIN,
+    isWindows ? "fontforge.exe" : "fontforge",
+    isWindows ? "C:/Program Files/FontForgeBuilds/bin/fontforge.exe" : "/usr/bin/fontforge",
+    isWindows ? "C:/Program Files (x86)/FontForgeBuilds/bin/fontforge.exe" : "/usr/local/bin/fontforge",
+    isWindows ? "C:/Program Files/FontForge/bin/fontforge.exe" : null,
+    isWindows ? "C:/Program Files (x86)/FontForge/bin/fontforge.exe" : null
   ]);
 }

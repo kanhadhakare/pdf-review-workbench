@@ -48,22 +48,41 @@ function normalizeFontKey(fontName: string): string {
 }
 
 function isBrowserSafeFontFormat(format: ExtractedFontAsset["format"]): boolean {
-  return format === "truetype" || format === "opentype" || format === "woff" || format === "woff2";
+  return format === "truetype" || format === "opentype" || format === "type1" || format === "woff" || format === "woff2";
 }
 
 function cssFontFormat(format: ExtractedFontAsset["format"]): string {
   return format === "truetype" ? "truetype" : format === "woff" ? "woff" : format === "woff2" ? "woff2" : "opentype";
 }
 
+function fontSourcePriority(format: ExtractedFontAsset["format"]): number {
+  if (format === "woff2") return 0;
+  if (format === "woff") return 1;
+  if (format === "truetype") return 2;
+  if (format === "opentype" || format === "type1") return 3;
+  return 4;
+}
+
 function fontFaceCss(fontAssets: ExtractedFontAsset[]): string {
-  return fontAssets
-    .filter((font) => isBrowserSafeFontFormat(font.format))
-    .map((font) => `@font-face {
-  font-family: "${sanitizeCssString(cleanPdfFontName(font.family))}";
-  src: url("../fonts/${sanitizeAttr(font.fileName)}") format("${cssFontFormat(font.format)}");
-  font-weight: ${font.fontWeight};
-  font-style: ${font.fontStyle};
-}`)
+  const grouped = new Map<string, ExtractedFontAsset[]>();
+  for (const font of fontAssets.filter((asset) => isBrowserSafeFontFormat(asset.format))) {
+    const key = [sanitizeCssString(cleanPdfFontName(font.family)), font.fontWeight, font.fontStyle].join("\u0000");
+    grouped.set(key, [...(grouped.get(key) ?? []), font]);
+  }
+  return [...grouped.values()]
+    .map((fonts) => {
+      const primary = fonts[0];
+      const sources = [...fonts]
+        .sort((a, b) => fontSourcePriority(a.format) - fontSourcePriority(b.format))
+        .map((font) => `url("../fonts/${sanitizeAttr(font.fileName)}") format("${cssFontFormat(font.format)}")`)
+        .join(",\n    ");
+      return `@font-face {
+  font-family: "${sanitizeCssString(cleanPdfFontName(primary.family))}";
+  src: ${sources};
+  font-weight: ${primary.fontWeight};
+  font-style: ${primary.fontStyle};
+}`;
+    })
     .join("\n\n");
 }
 

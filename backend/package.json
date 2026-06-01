@@ -18,7 +18,8 @@
     "mupdf": "^1.26.4",
     "p-limit": "^7.2.0",
     "pdfjs-dist": "^5.4.394",
-    "uuid": "^13.0.0"
+    "uuid": "^13.0.0",
+    "wawoff2": "^2.0.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",

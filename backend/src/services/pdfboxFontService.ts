@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { type FontExtractionManifest } from "../types.js";
 import { pdfboxJarPath } from "../config/runtime.js";
 import { jobStore } from "./jobStore.js";
+import { convertManifestFontsForWeb } from "./fontConversionService.js";
 
 const DEFAULT_JAR_PATH = pdfboxJarPath;
 const DEFAULT_JAVA_BIN = process.env.JAVA_BIN
@@ -107,7 +108,7 @@ export async function extractFontsWithPdfBox(jobId: string, sourcePdf: string): 
   }
 
   try {
-    const manifest = normalizeManifest(await readManifest(manifestPath), sourcePdf);
+    const manifest = await convertManifestFontsForWeb(jobId, normalizeManifest(await readManifest(manifestPath), sourcePdf));
     await jobStore.saveFontManifest(jobId, manifest);
     return manifest;
   } catch (error) {

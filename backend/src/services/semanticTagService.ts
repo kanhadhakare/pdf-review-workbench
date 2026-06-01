@@ -2,6 +2,7 @@ import { readFile, mkdir, readdir, copyFile, stat, writeFile } from "node:fs/pro
 import path from "node:path";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { jobStore } from "./jobStore.js";
+import { renderFinalBackgroundPng } from "./finalBackgroundService.js";
 
 export type SemanticBoxTag = "p" | "h1" | "h2" | "h3" | "caption" | "img";
 
@@ -26,6 +27,9 @@ type WordStyle = {
   fontWeight: string;
   fontStyle: string;
   color: string;
+  transform: string;
+  transformOrigin: string;
+  rotation: number;
   text: string;
 };
 
@@ -53,6 +57,17 @@ function boxesIntersect(a: { x: number; y: number; w: number; h: number }, b: { 
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
+function boxIntersectionArea(a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }): number {
+  const width = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x));
+  const height = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+  return width * height;
+}
+
+function wordBoxOverlapRatio(wordBounds: { x: number; y: number; w: number; h: number }, box: SemanticBox): number {
+  const wordArea = Math.max(1, wordBounds.w * wordBounds.h);
+  return boxIntersectionArea(wordBounds, box) / wordArea;
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -77,7 +92,7 @@ function parseWordCss(pageNumber: number, cssText: string): Map<number, Omit<Wor
     const index = Number(m[1]);
     const body = String(m[2] ?? "");
     const getNum = (prop: string): number => {
-      const mm = body.match(new RegExp(`${prop}\\s*:\\s*([0-9.]+)px`, "i"));
+      const mm = body.match(new RegExp(`${prop}\\s*:\\s*(-?[0-9.]+)px`, "i"));
       return mm ? Number(mm[1]) : 0;
     };
     const getStr = (prop: string): string => {
@@ -93,10 +108,18 @@ function parseWordCss(pageNumber: number, cssText: string): Map<number, Omit<Wor
       fontFamily: getStr("font-family").replace(/,\s*serif$/i, "").replace(/^['"]|['"]$/g, ""),
       fontWeight: getStr("font-weight") || "normal",
       fontStyle: getStr("font-style") || "normal",
-      color: getStr("color") || "#000000"
+      color: getStr("color") || "#000000",
+      transform: getStr("transform"),
+      transformOrigin: getStr("transform-origin") || "top left",
+      rotation: parseRotation(getStr("transform"))
     });
   }
   return map;
+}
+
+function parseRotation(transform: string): number {
+  const match = transform.match(/rotate\(\s*(-?[0-9.]+)deg\s*\)/i);
+  return match ? Number(match[1]) : 0;
 }
 
 function parseWordHtml(pageNumber: number, html: string): Map<number, string> {
@@ -150,6 +173,17 @@ function groupWordsIntoLines(words: WordStyle[]): WordStyle[][] {
     .sort((a, b) => median(a.map((w) => w.y)) - median(b.map((w) => w.y)));
 }
 
+function isRotatedWord(word: WordStyle): boolean {
+  return Math.abs(word.rotation) > 0.01;
+}
+
+function wordVisualBounds(word: WordStyle): { x: number; y: number; w: number; h: number } {
+  if (word.rotation === -90) return { x: word.x, y: word.y - word.w, w: word.h, h: word.w };
+  if (word.rotation === 90) return { x: word.x - word.h, y: word.y, w: word.h, h: word.w };
+  if (Math.abs(word.rotation) === 180) return { x: word.x - word.w, y: word.y - word.h, w: word.w, h: word.h };
+  return { x: word.x, y: word.y, w: word.w, h: word.h };
+}
+
 function formatPx(value: number): string {
   return `${Number(value.toFixed(3))}px`;
 }
@@ -198,10 +232,11 @@ function declarationsToCss(declarations: CssDeclarations): string {
 }
 
 function getWordBounds(words: WordStyle[]): { x: number; y: number; w: number; h: number } {
-  const left = Math.min(...words.map((word) => word.x));
-  const top = Math.min(...words.map((word) => word.y));
-  const right = Math.max(...words.map((word) => word.x + word.w));
-  const bottom = Math.max(...words.map((word) => word.y + word.h));
+  const bounds = words.map(wordVisualBounds);
+  const left = Math.min(...bounds.map((box) => box.x));
+  const top = Math.min(...bounds.map((box) => box.y));
+  const right = Math.max(...bounds.map((box) => box.x + box.w));
+  const bottom = Math.max(...bounds.map((box) => box.y + box.h));
   return { x: left, y: top, w: right - left, h: bottom - top };
 }
 
@@ -212,7 +247,8 @@ function wordSpanHtml(pageNumber: number, word: WordStyle): string {
 function wordCssRule(pageNumber: number, word: WordStyle, offset?: { x: number; y: number }): string {
   const left = word.x - (offset?.x ?? 0);
   const top = word.y - (offset?.y ?? 0);
-  return `.page${pageNumber}__word${word.index} { position: absolute; left: ${formatPx(left)}; top: ${formatPx(top)}; width: ${formatPx(word.w)}; height: ${formatPx(word.h)}; font-size: ${formatPx(word.fontSizePx)}; font-family: ${cssSingleQuoted(word.fontFamily)}, serif; font-weight: ${word.fontWeight}; font-style: ${word.fontStyle}; color: ${word.color}; white-space: nowrap; overflow: visible; background: transparent; }`;
+  const transformCss = word.transform ? ` transform-origin: ${word.transformOrigin}; transform: ${word.transform};` : "";
+  return `.page${pageNumber}__word${word.index} { position: absolute; left: ${formatPx(left)}; top: ${formatPx(top)}; width: ${formatPx(word.w)}; height: ${formatPx(word.h)}; font-size: ${formatPx(word.fontSizePx)}; font-family: ${cssSingleQuoted(word.fontFamily)}, serif; font-weight: ${word.fontWeight}; font-style: ${word.fontStyle}; color: ${word.color}; white-space: nowrap; overflow: visible; background: transparent;${transformCss} }`;
 }
 
 function safeFileToken(value: string): string {
@@ -286,6 +322,11 @@ async function copyFileOrKeepExisting(sourcePath: string, targetPath: string): P
   }
 }
 
+async function writeFinalPageImage(jobId: string, pageIndex: number, targetPath: string): Promise<void> {
+  const imageBytes = await renderFinalBackgroundPng(jobId, pageIndex, jobStore.getImagePath(jobId, pageIndex));
+  await writeFile(targetPath, imageBytes);
+}
+
 async function writeImageCrops(
   jobId: string,
   pageIndex: number,
@@ -331,24 +372,33 @@ export async function generateFinalPageFromBoxes(jobId: string, pageIndex: numbe
 
   words.sort((a, b) => (a.y - b.y) || (a.x - b.x));
 
-  const claimed = new Set<number>();
-  const paraBlocks: Array<{ box: SemanticBox; wordIndices: number[] }> = [];
-  for (const box of boxes) {
-    const picked: number[] = [];
-    for (const word of words) {
-      if (claimed.has(word.index)) continue;
-      if (boxesIntersect(box, word)) {
-        picked.push(word.index);
-        claimed.add(word.index);
+  const paraBlocks: Array<{ box: SemanticBox; wordIndices: number[] }> = boxes.map((box) => ({ box, wordIndices: [] }));
+  for (const word of words) {
+    const wordBounds = wordVisualBounds(word);
+    let bestBoxIndex = -1;
+    let bestOverlapRatio = 0;
+    boxes.forEach((box, index) => {
+      const overlapRatio = wordBoxOverlapRatio(wordBounds, box);
+      if (overlapRatio <= 0) return;
+      if (overlapRatio > bestOverlapRatio) {
+        bestBoxIndex = index;
+        bestOverlapRatio = overlapRatio;
       }
+    });
+    if (bestBoxIndex >= 0 && bestOverlapRatio >= 0.15) {
+      paraBlocks[bestBoxIndex].wordIndices.push(word.index);
     }
-    picked.sort((a, b) => {
+  }
+
+  const claimed = new Set<number>();
+  for (const block of paraBlocks) {
+    block.wordIndices.sort((a, b) => {
       const wa = byIndex.get(a);
       const wb = byIndex.get(b);
       if (!wa || !wb) return a - b;
       return (wa.y - wb.y) || (wa.x - wb.x);
     });
-    paraBlocks.push({ box, wordIndices: picked });
+    block.wordIndices.forEach((wordIndex) => claimed.add(wordIndex));
   }
 
   const semanticBlocks = paraBlocks
@@ -362,7 +412,8 @@ export async function generateFinalPageFromBoxes(jobId: string, pageIndex: numbe
         box: block.box,
         className: `page${pageNumber}-para${i + 1}`,
         selectedWords,
-        lines: groupWordsIntoLines(selectedWords),
+        isAbsolute: selectedWords.some(isRotatedWord),
+        lines: selectedWords.some(isRotatedWord) ? [] : groupWordsIntoLines(selectedWords),
         bounds: getWordBounds(selectedWords)
       };
     })
@@ -370,6 +421,7 @@ export async function generateFinalPageFromBoxes(jobId: string, pageIndex: numbe
       box: TextSemanticBox;
       className: string;
       selectedWords: WordStyle[];
+      isAbsolute: boolean;
       lines: WordStyle[][];
       bounds: { x: number; y: number; w: number; h: number };
     } => Boolean(block));
@@ -384,6 +436,9 @@ export async function generateFinalPageFromBoxes(jobId: string, pageIndex: numbe
 
   // Build final HTML: semantic parents own only grouping and origin; words keep their own extracted styles.
   const semanticElements = semanticBlocks.map((block) => {
+    if (block.isAbsolute) {
+      return `<${block.box.tag} class="page__para page__para--absolute ${block.className}" data-box-id="${escapeHtml(block.box.id)}">${block.selectedWords.map((word) => wordSpanHtml(pageNumber, word)).join("")}</${block.box.tag}>`;
+    }
     const lineHtml = block.lines
       .map((line, lineIndex) => `<span class="page__line ${block.className}__line${lineIndex + 1}">${line.map((word) => wordSpanHtml(pageNumber, word)).join("")}</span>`)
       .join("");
@@ -427,6 +482,7 @@ ${imageElements}
 .page__word { user-select: text; }
 .page__text > .page__word { position: absolute; margin: 0; padding: 0; white-space: nowrap; overflow: visible; background: transparent; z-index: 1; }
 .page__para { position: absolute; margin: 0; padding: 0; border: 0; background: transparent; white-space: pre; overflow: visible; z-index: 1; }
+.page__para--absolute .page__word { position: absolute; margin: 0; padding: 0; white-space: nowrap; overflow: visible; background: transparent; }
 .page__line { display: flex; align-items: flex-start; margin: 0; padding: 0; box-sizing: border-box; white-space: nowrap; overflow: visible; }
 .page__crop { position: absolute; display: block; margin: 0; padding: 0; border: 0; object-fit: fill; z-index: 2; }`;
 
@@ -435,6 +491,13 @@ ${imageElements}
   const semanticWordRules: string[] = [];
   const imageCssBlocks = imageBlocks.map((block) => `.${block.className} { left: ${formatPx(block.box.x)}; top: ${formatPx(block.box.y)}; width: ${formatPx(block.box.w)}; height: ${formatPx(block.box.h)}; }`);
   for (const block of semanticBlocks) {
+    if (block.isAbsolute) {
+      paraCssBlocks.push(`.${block.className} { left: ${formatPx(block.bounds.x)}; top: ${formatPx(block.bounds.y)}; width: ${formatPx(block.bounds.w)}; height: ${formatPx(block.bounds.h)}; }`);
+      for (const word of block.selectedWords) {
+        semanticWordRules.push(`.${block.className} ${wordCssRule(pageNumber, word, block.bounds)}`);
+      }
+      continue;
+    }
     const lineModels = block.lines.map((line) => {
       const commonWordStyles = commonDeclarations(line.map(wordInheritedStyles), INHERITED_WORD_STYLE_KEYS);
       return {
@@ -485,7 +548,7 @@ ${imageElements}
   await mkdir(finalFontsDir, { recursive: true });
 
   // Copy page image and all fonts into final (simple, safe).
-  await copyFileOrKeepExisting(jobStore.getImagePath(jobId, pageIndex), path.join(finalImagesDir, `page-${pageNumber}.png`));
+  await writeFinalPageImage(jobId, pageIndex, path.join(finalImagesDir, `page-${pageNumber}.png`));
   await writeImageCrops(jobId, pageIndex, imageBlocks, finalCropDir);
   const fontEntries = await readdir(jobStore.getFontsDir(jobId)).catch(() => []);
   for (const entry of fontEntries) {

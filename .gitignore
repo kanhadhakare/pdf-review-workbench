@@ -1,3 +1,11 @@
 storage/*
 .python311/*
 target/*
+cloudflared.log
+cloudflared.log
+public-backend.log
+public-frontend.log
+cloudflared.log
+public-backend.log
+public-frontend.log
+cloudflared.log

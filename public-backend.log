@@ -1,0 +1,3329 @@
+[backend] environment variables: {
+  JAVA_BIN: 'E:\\openjdk-21+35_windows-x64_bin\\jdk-21\\bin\\java.exe',
+  JAVA_HOME: 'E:\\openjdk-21+35_windows-x64_bin\\jdk-21',
+  PDFBOX_FONT_EXTRACTOR_JAR: 'E:\\pdf-review-workbench\\backend\\tools\\pdfbox-font-extractor\\target\\pdfbox-font-extractor.jar',
+  PYTHON_BIN: 'E:\\pdf-review-workbench\\backend\\.venv\\Scripts\\python.exe'
+}
+API listening on http://0.0.0.0:3000
+API listening on http://0.0.0.0:3000
+API listening on http://0.0.0.0:3000
+API listening on http://0.0.0.0:3000
+warning: invalid marked content and clip nesting
+warning: invalid marked content and clip nesting
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+warning: invalid marked content and clip nesting
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+warning: invalid marked content and clip nesting
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+warning: invalid marked content and clip nesting
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+warning: invalid marked content and clip nesting
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+warning: invalid marked content and clip nesting
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+warning: invalid marked content and clip nesting
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+API listening on http://0.0.0.0:3000
+warning: invalid marked content and clip nesting
+API listening on http://0.0.0.0:3000
+warning: invalid marked content and clip nesting
+warning: invalid marked content and clip nesting
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+API listening on http://0.0.0.0:3000
+warning: invalid marked content and clip nesting
+warning: invalid marked content and clip nesting
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+API listening on http://0.0.0.0:3000
+warning: invalid marked content and clip nesting
+warning: invalid marked content and clip nesting
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}
+[extractor] suspicious PDF text {
+  input: '\b',
+  output: '',
+  warnings: [
+    {
+      type: 'control-character',
+      message: 'PDF text contains control characters.',
+      count: 1
+    }
+  ]
+}

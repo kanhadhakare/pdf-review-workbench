@@ -30,7 +30,7 @@ export class PdfDashboardComponent {
   }
 
   finalZipUrl(item: JobListItem): string {
-    return this.jobs.getFinalZipUrl(item.job.id);
+    return `${this.jobs.getFinalZipUrl(item.job.id)}?v=${Date.now()}`;
   }
 
   deleteBook(item: JobListItem): void {

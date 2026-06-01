@@ -23,6 +23,7 @@ export interface RawSpan {
   fontSize: number;
   fontName: string;
   fontColor?: string;
+  rotation?: number;
 }
 
 export interface SemanticChildSpan {
