@@ -30,6 +30,7 @@ interface PageExtraction {
   scale: number;
   leftMarginPx: number;
   spans: ExtractorSpan[];
+  reviewWords: ReviewWord[];
   imageBytes: Uint8Array;
 }
 
@@ -155,6 +156,20 @@ type ReviewWord = {
   rotation?: number;
 };
 
+type StructuredChar = {
+  text: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  fontSize: number;
+  fontName: string;
+  fontWeight: "normal" | "bold";
+  fontStyle: "normal" | "italic";
+  fontColor: string;
+  rotation?: number;
+};
+
 function parseHtmlSpanRuns(html: string): HtmlSpanRun[] {
   // MuPDF structured HTML is typically: <p style="top:..;left:.."><span style="...color:...">TEXT</span></p>
   // We extract spans in document order and keep the paragraph top/left as hints.
@@ -220,6 +235,142 @@ function quadFromValue(value: unknown): number[] | null {
   if (!Array.isArray(value)) return null;
   const flattened = value.flatMap((entry) => Array.isArray(entry) ? entry : [entry]).map(Number);
   return flattened.length >= 8 && flattened.every(Number.isFinite) ? flattened : null;
+}
+
+function bboxFromQuad(quad: number[], scale: number, profile: ExtractionProfile): { x: number; y: number; w: number; h: number } {
+  const xs = [quad[0], quad[2], quad[4], quad[6]];
+  const ys = [quad[1], quad[3], quad[5], quad[7]];
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  return {
+    x: (minX * scale) + profile.coordOffsetX,
+    y: (minY * scale) + profile.coordOffsetY,
+    w: Math.max(0.1, (maxX - minX) * scale),
+    h: Math.max(0.1, (maxY - minY) * scale)
+  };
+}
+
+function cssColorFromMuPdf(color: unknown): string {
+  if (!Array.isArray(color) || color.length === 0) return "#000000";
+  const channels = color.map(Number).filter(Number.isFinite);
+  if (channels.length === 0) return "#000000";
+  const toByte = (value: number) => Math.max(0, Math.min(255, Math.round(value <= 1 ? value * 255 : value)));
+  if (channels.length === 1) {
+    const gray = toByte(channels[0]);
+    return `#${gray.toString(16).padStart(2, "0").repeat(3)}`;
+  }
+  if (channels.length >= 4) {
+    const [c, m, y, k] = channels.map((value) => value <= 1 ? value : value / 255);
+    const r = toByte((1 - Math.min(1, c)) * (1 - Math.min(1, k)));
+    const g = toByte((1 - Math.min(1, m)) * (1 - Math.min(1, k)));
+    const b = toByte((1 - Math.min(1, y)) * (1 - Math.min(1, k)));
+    return `#${[r, g, b].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
+  }
+  const [r, g, b] = channels.map(toByte);
+  return `#${[r, g, b].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function unionBoxes(chars: StructuredChar[]): { x: number; y: number; w: number; h: number } {
+  const minX = Math.min(...chars.map((char) => char.x));
+  const minY = Math.min(...chars.map((char) => char.y));
+  const maxX = Math.max(...chars.map((char) => char.x + char.w));
+  const maxY = Math.max(...chars.map((char) => char.y + char.h));
+  return {
+    x: minX,
+    y: minY,
+    w: Math.max(0.1, maxX - minX),
+    h: Math.max(0.1, maxY - minY)
+  };
+}
+
+function structuredCharsToReviewWords(chars: StructuredChar[], profile: ExtractionProfile): ReviewWord[] {
+  const words: ReviewWord[] = [];
+  let current: StructuredChar[] = [];
+  const flush = () => {
+    if (current.length === 0) return;
+    const rawText = current.map((char) => char.text).join("");
+    const text = normalizeText(rawText, profile);
+    if (text) {
+      const box = unionBoxes(current);
+      const styleSource = current.find((char) => char.text.trim()) ?? current[0];
+      words.push({
+        x: Number(box.x.toFixed(2)),
+        y: Number(box.y.toFixed(2)),
+        w: Number(box.w.toFixed(2)),
+        h: Number(box.h.toFixed(2)),
+        text,
+        fontSize: styleSource.fontSize,
+        fontName: styleSource.fontName,
+        fontWeight: styleSource.fontWeight,
+        fontStyle: styleSource.fontStyle,
+        fontColor: styleSource.fontColor,
+        rotation: styleSource.rotation
+      });
+    }
+    current = [];
+  };
+
+  for (const char of chars) {
+    if (!char.text || /\s/u.test(char.text)) {
+      flush();
+      continue;
+    }
+    current.push(char);
+  }
+  flush();
+  return words;
+}
+
+function collectReviewWords(structured: unknown, profile: ExtractionProfile, scale: number): ReviewWord[] {
+  const words: ReviewWord[] = [];
+  let lineChars: StructuredChar[] = [];
+  const flushLine = () => {
+    words.push(...structuredCharsToReviewWords(lineChars, profile));
+    lineChars = [];
+  };
+  const walker = structured as {
+    walk?: (handlers: {
+      beginLine?: (...args: unknown[]) => void;
+      onChar?: (...args: unknown[]) => void;
+      endLine?: () => void;
+    }) => void;
+  };
+  if (typeof walker.walk !== "function") return words;
+  try {
+    walker.walk({
+      beginLine: () => flushLine(),
+      onChar: (...args: unknown[]) => {
+        const rawText = String(args[0] ?? "");
+        const font = args[2] as { getName?: () => string; isBold?: () => boolean; isItalic?: () => boolean } | undefined;
+        const size = Number(args[3]);
+        const quad = quadFromValue(args[4]);
+        if (!rawText || !quad) return;
+        const box = bboxFromQuad(quad, scale, profile);
+        const fontName = font?.getName?.() ?? "Unknown";
+        const rotation = rotationFromQuad(quad);
+        lineChars.push({
+          text: rawText,
+          x: box.x,
+          y: box.y,
+          w: box.w,
+          h: box.h,
+          fontSize: Number.isFinite(size) ? size : box.h / scale,
+          fontName,
+          fontWeight: font?.isBold?.() || /bold|black|heavy/i.test(fontName) ? "bold" : "normal",
+          fontStyle: font?.isItalic?.() || detectFontStyle(fontName) === "italic" ? "italic" : "normal",
+          fontColor: cssColorFromMuPdf(args[5]),
+          rotation: rotation === 0 ? undefined : rotation
+        });
+      },
+      endLine: () => flushLine()
+    });
+    flushLine();
+  } catch (error) {
+    console.warn("[extractor] failed to collect MuPDF character boxes:", error);
+  }
+  return words;
 }
 
 function collectRotationHints(structured: unknown): RotationHint[] {
@@ -526,6 +677,7 @@ async function extractWithMuPdf(filePath: string, profile: ExtractionProfile, dp
     const html = structured.asHTML(0);
     const htmlRuns = parseHtmlSpanRuns(html);
     const rotationHints = collectRotationHints(structured);
+    const reviewWords = collectReviewWords(structured, profile, scale);
     let runIndex = 0;
     const json = JSON.parse(structured.asJSON(1)) as StructuredPageJson;
     const spans: ExtractorSpan[] = [];
@@ -574,7 +726,7 @@ async function extractWithMuPdf(filePath: string, profile: ExtractionProfile, dp
         });
       }
     }
-    return { pageIndex, pageWidth, pageHeight, scale, leftMarginPx: detectLeftMarginPx(spans), spans, imageBytes };
+    return { pageIndex, pageWidth, pageHeight, scale, leftMarginPx: detectLeftMarginPx(spans), spans, reviewWords, imageBytes };
   })));
 }
 
@@ -711,11 +863,11 @@ function buildCombinedReviewCss(extracted: PageExtraction, profile: ExtractionPr
 }
 
 function buildCombinedReviewHtml(extracted: PageExtraction, profile: ExtractionProfile, fontAssets: ExtractedFontAsset[], imageHref: string, cssHref: string): string {
-  const words: ReviewWord[] = [];
-
-  for (const span of extracted.spans) {
-    words.push(...createReviewWords(span));
-  }
+  void profile;
+  void fontAssets;
+  const words = extracted.reviewWords.length > 0
+    ? extracted.reviewWords
+    : extracted.spans.flatMap((span) => createReviewWords(span));
 
   const elements = words
     .map((word, index) => {
@@ -746,19 +898,16 @@ function buildPageArtifacts(jobId: string, extracted: PageExtraction, profile: E
   const commonCss = `.page { position: relative; width: ${extracted.pageWidth}px; height: ${extracted.pageHeight}px; overflow: hidden; }\n.page__bg { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }\n.page__text { position: absolute; inset: 0; z-index: 1; }\n.page__word { position: absolute; margin: 0; white-space: nowrap; overflow: visible; user-select: text; }\n.page__word { background: rgba(255, 255, 255, 0.04); }`;
 
   const wordRules: string[] = [];
-  // Recreate the same word split used by the HTML generator so CSS indices match.
-  let wordIndex = 0;
-  for (const span of extracted.spans) {
-    for (const word of createReviewWords(span)) {
-      const family = resolveCssFontFamily(span.fontName, browserSafeFonts);
-      const fontStyle = detectFontStyle(span.fontName);
-      const fontSizePx = Number((span.fontSize * extracted.scale).toFixed(3));
-      const color = sanitizeColor(span.fontColor ?? "#000000");
-      const box = cssBoxForRotation(word);
-      const transformCss = isRotated(word.rotation) ? ` transform-origin: top left; transform: rotate(${normalizeRotationAngle(word.rotation ?? 0)}deg);` : "";
-      wordRules.push(`.page${pageNumber}__word${wordIndex} { left: ${Number(box.left.toFixed(2))}px; top: ${Number(box.top.toFixed(2))}px; width: ${Number(box.width.toFixed(2))}px; height: ${Number(box.height.toFixed(2))}px; font-size: ${fontSizePx}px; font-family: ${cssSingleQuoted(family)}, serif; font-weight: ${span.fontWeight}; font-style: ${fontStyle}; color: ${color};${transformCss} }`);
-      wordIndex += 1;
-    }
+  const reviewWords = extracted.reviewWords.length > 0
+    ? extracted.reviewWords
+    : extracted.spans.flatMap((span) => createReviewWords(span));
+  for (const [wordIndex, word] of reviewWords.entries()) {
+    const family = resolveCssFontFamily(word.fontName, browserSafeFonts);
+    const fontSizePx = Number((word.fontSize * extracted.scale).toFixed(3));
+    const color = sanitizeColor(word.fontColor ?? "#000000");
+    const box = cssBoxForRotation(word);
+    const transformCss = isRotated(word.rotation) ? ` transform-origin: top left; transform: rotate(${normalizeRotationAngle(word.rotation ?? 0)}deg);` : "";
+    wordRules.push(`.page${pageNumber}__word${wordIndex} { left: ${Number(box.left.toFixed(2))}px; top: ${Number(box.top.toFixed(2))}px; width: ${Number(box.width.toFixed(2))}px; height: ${Number(box.height.toFixed(2))}px; font-size: ${fontSizePx}px; font-family: ${cssSingleQuoted(family)}, serif; font-weight: ${word.fontWeight}; font-style: ${word.fontStyle}; color: ${color};${transformCss} }`);
   }
 
   // Phase 1: word mapping rules are required for correct rendering.

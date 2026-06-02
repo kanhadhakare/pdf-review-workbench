@@ -21,6 +21,21 @@ export interface TextNormalizationResult {
 }
 
 const LEGACY_MOJIBAKE_MAP: Record<string, string> = {
+  "\u00e2\u20ac\u0153": "\u201c",
+  "\u00e2\u20ac\u009d": "\u201d",
+  "\u00e2\u20ac\u2122": "\u2019",
+  "\u00e2\u20ac\u02dc": "\u2018",
+  "\u00e2\u20ac\u201c": "\u2013",
+  "\u00e2\u20ac\u201d": "\u2014",
+  "\u00e2\u20ac\u00a2": "\u2022",
+  "\u00e2\u20ac\u00a6": "\u2026",
+  "\u00e2\u2013\u00a0": "\u25a0",
+  "\u00c2\u00ae": "\u00ae",
+  "\u00c2\u00a9": "\u00a9",
+  "\u00c2\u00b0": "\u00b0",
+  "\u00c2\u00b1": "\u00b1",
+  "\u00c2\u00b7": "\u00b7",
+  "\u00c2\u00a0": " ",
   "Ã‚Â»": "»",
   "Ã¢â‚¬Â": "”",
   "Ã¢â‚¬Å“": "“",
