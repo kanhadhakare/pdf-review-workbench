@@ -1,4 +1,4 @@
-import { readFile, mkdir, readdir, copyFile, stat, writeFile } from "node:fs/promises";
+import { readFile, mkdir, readdir, copyFile, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { jobStore } from "./jobStore.js";
@@ -231,6 +231,46 @@ function declarationsToCss(declarations: CssDeclarations): string {
     .join(" ");
 }
 
+function styleClassName(prefix: string, index: number): string {
+  return `${prefix}${index}`;
+}
+
+function createStyleClassRegistry() {
+  const counters = new Map<string, number>();
+  const byKey = new Map<string, string>();
+  const rules: string[] = [];
+  return {
+    use(prefix: string, declarations: CssDeclarations): string {
+      const cssText = declarationsToCss(declarations);
+      if (!cssText) return "";
+      const key = `${prefix}\u0000${cssText}`;
+      const existing = byKey.get(key);
+      if (existing) return existing;
+      const nextIndex = (counters.get(prefix) ?? 0) + 1;
+      counters.set(prefix, nextIndex);
+      const className = styleClassName(prefix, nextIndex);
+      byKey.set(key, className);
+      rules.push(`.${className} { ${cssText} }`);
+      return className;
+    },
+    rules(): string[] {
+      return rules;
+    }
+  };
+}
+
+function semanticStyleClasses(registry: ReturnType<typeof createStyleClassRegistry>, declarations: CssDeclarations): string[] {
+  const classNames = [
+    registry.use("f", declarations["font-family"] ? { "font-family": declarations["font-family"] } : {}),
+    registry.use("fs", declarations["font-size"] ? { "font-size": declarations["font-size"] } : {}),
+    registry.use("fw", declarations["font-weight"] ? { "font-weight": declarations["font-weight"] } : {}),
+    registry.use("fst", declarations["font-style"] ? { "font-style": declarations["font-style"] } : {}),
+    registry.use("c", declarations.color ? { color: declarations.color } : {}),
+    registry.use("lh", declarations["line-height"] ? { "line-height": declarations["line-height"] } : {})
+  ];
+  return classNames.filter(Boolean);
+}
+
 function getWordBounds(words: WordStyle[]): { x: number; y: number; w: number; h: number } {
   const bounds = words.map(wordVisualBounds);
   const left = Math.min(...bounds.map((box) => box.x));
@@ -253,6 +293,10 @@ function wordCssRule(pageNumber: number, word: WordStyle, offset?: { x: number; 
 
 function safeFileToken(value: string): string {
   return value.replace(/[^A-Za-z0-9_-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 80) || "crop";
+}
+
+function pageElementId(pageNumber: number, type: "para" | "img", index: number): string {
+  return `page${String(pageNumber).padStart(4, "0")}_${type}${index}`;
 }
 
 function lineTop(line: WordStyle[]): number {
@@ -324,7 +368,23 @@ async function copyFileOrKeepExisting(sourcePath: string, targetPath: string): P
 
 async function writeFinalPageImage(jobId: string, pageIndex: number, targetPath: string): Promise<void> {
   const imageBytes = await renderFinalBackgroundPng(jobId, pageIndex, jobStore.getImagePath(jobId, pageIndex));
-  await writeFile(targetPath, imageBytes);
+  try {
+    await writeFile(targetPath, imageBytes);
+  } catch (error) {
+    const existing = await stat(targetPath).catch(() => null);
+    if (existing?.isFile()) return;
+    throw error;
+  }
+}
+
+async function writeFinalTextFile(targetPath: string, content: string): Promise<void> {
+  const tempPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(tempPath, content, "utf8");
+  try {
+    await rename(tempPath, targetPath);
+  } catch {
+    await writeFile(targetPath, content, "utf8");
+  }
 }
 
 async function writeImageCrops(
@@ -410,6 +470,7 @@ export async function generateFinalPageFromBoxes(jobId: string, pageIndex: numbe
       if (!selectedWords.length) return null;
       return {
         box: block.box,
+        elementId: pageElementId(pageNumber, "para", i + 1),
         className: `page${pageNumber}-para${i + 1}`,
         selectedWords,
         isAbsolute: selectedWords.some(isRotatedWord),
@@ -419,6 +480,7 @@ export async function generateFinalPageFromBoxes(jobId: string, pageIndex: numbe
     })
     .filter((block): block is {
       box: TextSemanticBox;
+      elementId: string;
       className: string;
       selectedWords: WordStyle[];
       isAbsolute: boolean;
@@ -430,19 +492,63 @@ export async function generateFinalPageFromBoxes(jobId: string, pageIndex: numbe
     .filter((block) => block.box.tag === "img")
     .map((block, i) => ({
       box: block.box,
+      elementId: pageElementId(pageNumber, "img", i + 1),
       className: `page${pageNumber}-img${i + 1}`,
       fileName: `page-${pageNumber}-${safeFileToken(block.box.id)}.png`
     }));
 
-  // Build final HTML: semantic parents own only grouping and origin; words keep their own extracted styles.
-  const semanticElements = semanticBlocks.map((block) => {
+  const styleClassRegistry = createStyleClassRegistry();
+  const baseParaClass = styleClassRegistry.use("s", {
+    position: "absolute",
+    display: "block",
+    margin: "0",
+    padding: "0",
+    border: "0",
+    background: "transparent",
+    "white-space": "pre",
+    overflow: "visible",
+    "z-index": "1"
+  });
+  const semanticModels = semanticBlocks.map((block) => {
     if (block.isAbsolute) {
-      return `<${block.box.tag} class="page__para page__para--absolute ${block.className}" data-box-id="${escapeHtml(block.box.id)}">${block.selectedWords.map((word) => wordSpanHtml(pageNumber, word)).join("")}</${block.box.tag}>`;
+      const parentStyles = commonDeclarations(block.selectedWords.map(wordInheritedStyles), STYLE_OUTPUT_ORDER);
+      return {
+        ...block,
+        classNames: [baseParaClass, ...semanticStyleClasses(styleClassRegistry, parentStyles), "page__para", "page__para--absolute", block.className].filter(Boolean),
+        parentStyles,
+        lineModels: [] as Array<{ line: WordStyle[]; commonGap: number | null; styles: CssDeclarations }>
+      };
+    }
+    const lineModels = block.lines.map((line) => {
+      const commonWordStyles = commonDeclarations(line.map(wordInheritedStyles), INHERITED_WORD_STYLE_KEYS);
+      return {
+        line,
+        commonGap: commonLineGap(line),
+        styles: {
+          ...commonWordStyles,
+          "line-height": formatPx(renderedLineHeight(line))
+        }
+      };
+    });
+    const parentStyles = commonDeclarations(lineModels.map((lineModel) => lineModel.styles), STYLE_OUTPUT_ORDER);
+    return {
+      ...block,
+      classNames: [baseParaClass, ...semanticStyleClasses(styleClassRegistry, parentStyles), "page__para", block.className].filter(Boolean),
+      parentStyles,
+      lineModels
+    };
+  });
+
+  // Build final HTML: semantic parents own only grouping and origin; words keep their own extracted styles.
+  const semanticElements = semanticModels.map((block) => {
+    const classAttr = block.classNames.join(" ");
+    if (block.isAbsolute) {
+      return `<${block.box.tag} id="${block.elementId}" class="${classAttr}" data-box-id="${escapeHtml(block.box.id)}">${block.selectedWords.map((word) => wordSpanHtml(pageNumber, word)).join("")}</${block.box.tag}>`;
     }
     const lineHtml = block.lines
       .map((line, lineIndex) => `<span class="page__line ${block.className}__line${lineIndex + 1}">${line.map((word) => wordSpanHtml(pageNumber, word)).join("")}</span>`)
       .join("");
-    return `<${block.box.tag} class="page__para ${block.className}" data-box-id="${escapeHtml(block.box.id)}">${lineHtml}</${block.box.tag}>`;
+    return `<${block.box.tag} id="${block.elementId}" class="${classAttr}" data-box-id="${escapeHtml(block.box.id)}">${lineHtml}</${block.box.tag}>`;
   }).join("\n");
 
   // Unboxed words remain absolutely positioned as before.
@@ -452,7 +558,7 @@ export async function generateFinalPageFromBoxes(jobId: string, pageIndex: numbe
     .join("\n");
 
   const imageElements = imageBlocks
-    .map((block) => `<img class="page__crop ${block.className}" src="./images/crops/${escapeHtml(block.fileName)}" alt="">`)
+    .map((block) => `<img id="${block.elementId}" class="page__crop ${block.className}" src="./images/crops/${escapeHtml(block.fileName)}" alt="">`)
     .join("\n");
 
   const finalHtml = `<!doctype html>
@@ -489,33 +595,20 @@ ${imageElements}
   const paraCssBlocks: string[] = [];
   const lineCssBlocks: string[] = [];
   const semanticWordRules: string[] = [];
-  const imageCssBlocks = imageBlocks.map((block) => `.${block.className} { left: ${formatPx(block.box.x)}; top: ${formatPx(block.box.y)}; width: ${formatPx(block.box.w)}; height: ${formatPx(block.box.h)}; }`);
-  for (const block of semanticBlocks) {
+  const imageCssBlocks = imageBlocks.map((block) => `#${block.elementId} { left: ${formatPx(block.box.x)}; top: ${formatPx(block.box.y)}; width: ${formatPx(block.box.w)}; height: ${formatPx(block.box.h)}; }`);
+  for (const block of semanticModels) {
     if (block.isAbsolute) {
-      paraCssBlocks.push(`.${block.className} { left: ${formatPx(block.bounds.x)}; top: ${formatPx(block.bounds.y)}; width: ${formatPx(block.bounds.w)}; height: ${formatPx(block.bounds.h)}; }`);
+      paraCssBlocks.push(`#${block.elementId} { left: ${formatPx(block.bounds.x)}; top: ${formatPx(block.bounds.y)}; width: ${formatPx(block.bounds.w)}; height: ${formatPx(block.bounds.h)}; }`);
       for (const word of block.selectedWords) {
         semanticWordRules.push(`.${block.className} ${wordCssRule(pageNumber, word, block.bounds)}`);
       }
       continue;
     }
-    const lineModels = block.lines.map((line) => {
-      const commonWordStyles = commonDeclarations(line.map(wordInheritedStyles), INHERITED_WORD_STYLE_KEYS);
-      return {
-        line,
-        commonGap: commonLineGap(line),
-        styles: {
-          ...commonWordStyles,
-          "line-height": formatPx(renderedLineHeight(line))
-        }
-      };
-    });
-    const parentStyles = commonDeclarations(lineModels.map((lineModel) => lineModel.styles), STYLE_OUTPUT_ORDER);
-    const parentCss = declarationsToCss(parentStyles);
-    paraCssBlocks.push(`.${block.className} { left: ${formatPx(block.bounds.x)}; top: ${formatPx(block.bounds.y)};${parentCss ? ` ${parentCss}` : ""} }`);
-    lineModels.forEach((lineModel, lineIndex) => {
+    paraCssBlocks.push(`#${block.elementId} { left: ${formatPx(block.bounds.x)}; top: ${formatPx(block.bounds.y)}; }`);
+    block.lineModels.forEach((lineModel, lineIndex) => {
       const { line, commonGap, styles } = lineModel;
       const lineClassName = `${block.className}__line${lineIndex + 1}`;
-      const lineStyles = subtractDeclarations(styles, parentStyles);
+      const lineStyles = subtractDeclarations(styles, block.parentStyles);
       const lineLayout: CssDeclarations = {
         height: formatPx(lineHeight(block.lines, lineIndex)),
         "padding-left": formatPx(lineLeft(line) - block.bounds.x)
@@ -535,7 +628,7 @@ ${imageElements}
     .map((w) => wordCssRule(pageNumber, w))
     .join("\n");
 
-  const finalCss = `${stripPageWordRules(pageNumber, css)}\n\n${commonCss}\n\n${paraCssBlocks.join("\n")}\n\n${lineCssBlocks.join("\n")}\n\n${semanticWordRules.join("\n")}\n\n${imageCssBlocks.join("\n")}\n\n${wordRules}`;
+  const finalCss = `${stripPageWordRules(pageNumber, css)}\n\n${commonCss}\n\n${styleClassRegistry.rules().join("\n")}\n\n${paraCssBlocks.join("\n")}\n\n${lineCssBlocks.join("\n")}\n\n${semanticWordRules.join("\n")}\n\n${imageCssBlocks.join("\n")}\n\n${wordRules}`;
 
   const finalDir = jobStore.getFinalDir(jobId);
   const finalStyleDir = path.join(finalDir, "style");
@@ -557,7 +650,7 @@ ${imageElements}
   }
 
   await Promise.all([
-    writeFile(path.join(finalDir, `page-${pageNumber}.html`), finalHtml, "utf8"),
-    writeFile(path.join(finalStyleDir, `page-${pageNumber}.css`), finalCss, "utf8")
+    writeFinalTextFile(path.join(finalDir, `page-${pageNumber}.html`), finalHtml),
+    writeFinalTextFile(path.join(finalStyleDir, `page-${pageNumber}.css`), finalCss)
   ]);
 }

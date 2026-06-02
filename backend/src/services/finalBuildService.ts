@@ -3,6 +3,7 @@ import { type BlockStyles, type ExtractedFontAsset, type FixDelta, type PageResu
 import { jobStore } from "./jobStore.js";
 
 type MutableTextBlock = TextBlock & { imageCrop?: NonNullable<TextBlock["imageCrop"]> };
+type CssDeclarations = Record<string, string>;
 
 const TEXT_TAGS = new Set<SemanticTag>(["h1", "h2", "h3", "p", "span", "caption"]);
 
@@ -21,6 +22,41 @@ function escapeHtml(value: string): string {
 
 function sanitizeAttr(value: string): string {
   return escapeHtml(value).replace(/\n/g, " ");
+}
+
+function pageElementId(pageNumber: number, type: "para" | "img", index: number): string {
+  return `page${String(pageNumber).padStart(4, "0")}_${type}${index}`;
+}
+
+function declarationsToCss(declarations: CssDeclarations): string {
+  return Object.entries(declarations)
+    .filter(([, value]) => typeof value === "string" && value.length > 0)
+    .map(([property, value]) => `${property}: ${value};`)
+    .join(" ");
+}
+
+function createStyleClassRegistry() {
+  const counters = new Map<string, number>();
+  const byKey = new Map<string, string>();
+  const rules: string[] = [];
+  return {
+    use(prefix: string, declarations: CssDeclarations): string {
+      const cssText = declarationsToCss(declarations);
+      if (!cssText) return "";
+      const key = `${prefix}\u0000${cssText}`;
+      const existing = byKey.get(key);
+      if (existing) return existing;
+      const nextIndex = (counters.get(prefix) ?? 0) + 1;
+      counters.set(prefix, nextIndex);
+      const className = `${prefix}${nextIndex}`;
+      byKey.set(key, className);
+      rules.push(`.${className} { ${cssText} }`);
+      return className;
+    },
+    rules(): string[] {
+      return rules;
+    }
+  };
 }
 
 function sanitizeCssString(value: string): string {
@@ -265,38 +301,57 @@ function renderSemanticChildren(children: SemanticChildSpan[]): string {
     .join("\n");
 }
 
-function buildCss(page: PageResult, fontAssets: ExtractedFontAsset[]): string {
+function textBlockClassNames(block: TextBlock, fontAssets: ExtractedFontAsset[], registry: ReturnType<typeof createStyleClassRegistry>): string[] {
+  const styles = blockStyles(block);
+  return [
+    registry.use("s", {
+      position: "absolute",
+      display: "block",
+      margin: "0",
+      border: "0",
+      "user-select": "text",
+      "z-index": "1"
+    }),
+    registry.use("f", { "font-family": `"${resolveCssFontFamily(block.fontName, fontAssets)}", serif` }),
+    registry.use("fs", { "font-size": `${block.fontSize}pt` }),
+    registry.use("fw", { "font-weight": block.fontWeight }),
+    registry.use("fst", { "font-style": resolveCssFontStyle(block.fontName, fontAssets) }),
+    registry.use("c", { color: sanitizeColor(block.fontColor) }),
+    registry.use("lh", { "line-height": String(styles.lineHeight) }),
+    registry.use("ws", { "white-space": block.textMode === "pre" ? "pre" : "nowrap" }),
+    registry.use("ta", { "text-align": styles.textAlign })
+  ].filter(Boolean);
+}
+
+function buildCss(page: PageResult, pageNumber: number, fontAssets: ExtractedFontAsset[]): string {
+  const registry = createStyleClassRegistry();
+  let paraIndex = 0;
+  let imageIndex = 0;
   const rules = page.blocks.map((block) => {
     const styles = blockStyles(block);
     if (block.tag === "img") {
-      return `[data-block-id="${block.id}"] {
+      imageIndex += 1;
+      return `#${pageElementId(pageNumber, "img", imageIndex)} {
   position: absolute;
   left: ${block.x}px;
   top: ${block.y}px;
   width: ${block.w}px;
   height: ${block.h}px;
+  position: absolute;
   object-fit: fill;
   z-index: 2;
 }`;
     }
-    return `[data-block-id="${block.id}"] {
-  position: absolute;
+    paraIndex += 1;
+    textBlockClassNames(block, fontAssets, registry);
+    return `#${pageElementId(pageNumber, "para", paraIndex)} {
   left: ${block.x}px;
   top: ${block.y}px;
   width: ${block.w}px;
   height: ${block.h}px;
-  font-size: ${block.fontSize}pt;
-  font-family: "${resolveCssFontFamily(block.fontName, fontAssets)}", serif;
-  font-weight: ${block.fontWeight};
-  font-style: ${resolveCssFontStyle(block.fontName, fontAssets)};
-  color: ${sanitizeColor(block.fontColor)};
-  white-space: ${block.textMode === "pre" ? "pre" : "nowrap"};
   overflow: visible;
   text-indent: ${styles.textIndent}px;
   padding-left: ${styles.paddingLeft}px;
-  line-height: ${styles.lineHeight};
-  text-align: ${styles.textAlign};
-  z-index: 1;
 }`;
   }).join("\n\n");
 
@@ -307,22 +362,33 @@ function buildCss(page: PageResult, fontAssets: ExtractedFontAsset[]): string {
 .page__text { position: absolute; inset: 0; z-index: 1; }
 .page__text > * { margin: 0; user-select: text; }
 .page__text [data-semantic-text="true"] { opacity: 0.01; }
-${faces ? `${faces}\n\n` : ""}${rules}`;
+${faces ? `${faces}\n\n` : ""}${registry.rules().join("\n")}\n\n${rules}`;
 }
 
-function renderBlock(block: TextBlock): string {
+function renderBlock(block: TextBlock, pageNumber: number, elementIndex: number, fontAssets: ExtractedFontAsset[], registry: ReturnType<typeof createStyleClassRegistry>): string {
   if (block.tag === "img") {
     const fileName = block.imageCrop?.fileName;
     const src = fileName ? `../images/crops/${fileName}` : "";
-    return `<img data-block-id="${sanitizeAttr(block.id)}" data-tag="img" src="${sanitizeAttr(src)}" alt="">`;
+    return `<img id="${pageElementId(pageNumber, "img", elementIndex)}" data-block-id="${sanitizeAttr(block.id)}" data-tag="img" src="${sanitizeAttr(src)}" alt="">`;
   }
   const tag = validTag(block.tag);
   const content = block.semanticChildren?.length ? renderSemanticChildren(block.semanticChildren) : escapeHtml(block.text);
-  return `<${tag} data-semantic-text="true" data-block-id="${sanitizeAttr(block.id)}" data-confidence="${block.confidence}" data-tag="${tag}" data-is-indented="${block.isFirstLineIndented}">${content}</${tag}>`;
+  const classNames = textBlockClassNames(block, fontAssets, registry).join(" ");
+  return `<${tag} id="${pageElementId(pageNumber, "para", elementIndex)}" class="${classNames}" data-semantic-text="true" data-block-id="${sanitizeAttr(block.id)}" data-confidence="${block.confidence}" data-tag="${tag}" data-is-indented="${block.isFirstLineIndented}">${content}</${tag}>`;
 }
 
-function buildHtml(page: PageResult, pageNumber: number): string {
-  const elements = page.blocks.map(renderBlock).join("\n");
+function buildHtml(page: PageResult, pageNumber: number, fontAssets: ExtractedFontAsset[]): string {
+  const registry = createStyleClassRegistry();
+  let paraIndex = 0;
+  let imageIndex = 0;
+  const elements = page.blocks.map((block) => {
+    if (block.tag === "img") {
+      imageIndex += 1;
+      return renderBlock(block, pageNumber, imageIndex, fontAssets, registry);
+    }
+    paraIndex += 1;
+    return renderBlock(block, pageNumber, paraIndex, fontAssets, registry);
+  }).join("\n");
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -355,8 +421,8 @@ export async function applyFixesAndRegenerateFinal(jobId: string, pageIndex: num
   const pageNumber = pageIndex + 1;
   const manifest = await jobStore.getFontManifest(jobId);
   const fontAssets = manifest?.fonts ?? [];
-  const css = buildCss(nextPage, fontAssets);
-  const html = buildHtml(nextPage, pageNumber);
+  const css = buildCss(nextPage, pageNumber, fontAssets);
+  const html = buildHtml(nextPage, pageNumber, fontAssets);
   nextPage.htmlContent = html;
   await jobStore.saveRegeneratedFinalPage(jobId, pageIndex, nextPage, html, css);
   return nextPage;

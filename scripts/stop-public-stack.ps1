@@ -8,6 +8,16 @@ foreach ($port in $ports) {
       $pids += $connection.OwningProcess
     }
   }
+
+  if (-not $connections) {
+    $netstatLines = netstat -ano | Select-String -Pattern ":$port\s+.*LISTENING\s+(\d+)"
+    foreach ($line in $netstatLines) {
+      $processId = [int]$line.Matches[0].Groups[1].Value
+      if ($processId -and ($pids -notcontains $processId)) {
+        $pids += $processId
+      }
+    }
+  }
 }
 
 foreach ($pidValue in $pids) {

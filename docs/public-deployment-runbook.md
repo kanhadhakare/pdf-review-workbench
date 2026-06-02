@@ -33,10 +33,16 @@ Run in Windows PowerShell:
 
 ```powershell
 cd E:\pdf-review-workbench
-powershell.exe -ExecutionPolicy Bypass -File .\scripts\restart-public-stack.ps1
+powershell.exe -ExecutionPolicy Bypass -File .\scripts\restart-all-public.ps1
 ```
 
-Then run in WSL:
+Or double-click/run:
+
+```powershell
+E:\pdf-review-workbench\restart-public.bat
+```
+
+The script restarts the Windows backend, frontend, protected gateway, then tries to restart `cloudflared` through WSL. If WSL is not reachable from that PowerShell session, run this manually in WSL:
 
 ```bash
 sudo systemctl restart cloudflared
@@ -57,10 +63,10 @@ HTTP/2 401
 
 ```powershell
 cd E:\pdf-review-workbench
-powershell.exe -ExecutionPolicy Bypass -File .\scripts\restart-public-stack.ps1
+powershell.exe -ExecutionPolicy Bypass -File .\scripts\restart-all-public.ps1
 ```
 
-2. Open WSL:
+2. If the script says WSL is unavailable, open WSL:
 
 ```bash
 sudo systemctl restart cloudflared
