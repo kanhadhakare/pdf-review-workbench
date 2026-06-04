@@ -5,7 +5,7 @@ export enum ExtractionStatus {
   failed = "failed"
 }
 
-export type SemanticTag = "h1" | "h2" | "h3" | "p" | "span" | "caption" | "artifact" | "img";
+export type SemanticTag = "h1" | "h2" | "h3" | "p" | "span" | "caption" | "artifact" | "img" | "equation";
 
 export interface BlockStyles {
   textIndent: number;

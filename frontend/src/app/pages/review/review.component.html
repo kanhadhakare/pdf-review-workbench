@@ -27,19 +27,22 @@
         <input type="checkbox" [checked]="showPageNav()" (change)="showPageNav.set(!showPageNav())">
         <span>Show pages</span>
       </label>
-      <select [ngModel]="activeTag()" (ngModelChange)="activeTag.set($event)" [disabled]="!boxMode()">
+      <select [ngModel]="activeTag()" (ngModelChange)="setActiveTag($event)" [disabled]="!boxMode()">
         <option value="p">p</option>
         <option value="h1">h1</option>
         <option value="h2">h2</option>
         <option value="h3">h3</option>
         <option value="caption">caption</option>
         <option value="img">img crop</option>
+        <option value="equation">equation</option>
       </select>
       <button type="button" (click)="saveBoxes()" [disabled]="!boxMode() || savingBoxes()">{{ savingBoxes() ? 'Saving...' : 'Save Boxes' }}</button>
+      <button type="button" (click)="recognizeSelectedEquation()" [disabled]="!boxMode() || !selectedEquationBox() || recognizingEquation()">{{ recognizingEquation() ? 'Reading math...' : 'Read Equation' }}</button>
       <button type="button" (click)="openFinalOutput()" [disabled]="!page()">Open Final</button>
       <button type="button" (click)="deleteSelectedBox()" [disabled]="!boxMode() || !selectedBoxId()">Delete Box</button>
       <button type="button" (click)="previousPage()" [disabled]="pageIndex() === 0">Previous</button>
       <button type="button" (click)="nextPage()" [disabled]="pageIndex() >= pageCount() - 1">Next</button>
+      <span class="equation-status" *ngIf="equationMessage()">{{ equationMessage() }}</span>
     </header>
 
     <section class="review-workspace" [class.review-workspace--side-by-side]="showFinalPane()">
@@ -58,14 +61,15 @@
                 *ngFor="let b of boxes(); let i = index"
                 class="saved-box"
                 [class.saved-box--img]="b.tag === 'img'"
+                [class.saved-box--equation]="b.tag === 'equation'"
                 [class.saved-box--selected]="selectedBoxId() === b.id"
                 [style.left.px]="b.x"
                 [style.top.px]="b.y"
                 [style.width.px]="b.w"
                 [style.height.px]="b.h"
                 (mousedown)="boxMouseDown($event, b)">
-                <span class="saved-box__label">#{{ i + 1 }} {{ b.tag }}</span>
-                <button *ngIf="boxMode()" type="button" class="saved-box__delete" title="Delete box" (mousedown)="$event.stopPropagation()" (click)="deleteBox(b.id)">×</button>
+                <span class="saved-box__label">#{{ i + 1 }} {{ b.tag }}<ng-container *ngIf="b.tag === 'equation' && b.math?.status"> &middot; {{ b.math?.status }}</ng-container></span>
+                <button *ngIf="boxMode()" type="button" class="saved-box__delete" title="Delete box" (mousedown)="$event.stopPropagation()" (click)="deleteBox(b.id)">&times;</button>
                 <button *ngIf="boxMode()" type="button" class="resize-handle resize-handle--nw" title="Resize" (mousedown)="resizeMouseDown($event, b, 'nw')"></button>
                 <button *ngIf="boxMode()" type="button" class="resize-handle resize-handle--ne" title="Resize" (mousedown)="resizeMouseDown($event, b, 'ne')"></button>
                 <button *ngIf="boxMode()" type="button" class="resize-handle resize-handle--sw" title="Resize" (mousedown)="resizeMouseDown($event, b, 'sw')"></button>

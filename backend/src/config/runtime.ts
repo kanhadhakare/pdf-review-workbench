@@ -32,6 +32,7 @@ export const modelsStorageRoot = path.join(storageRoot, "models");
 export const uploadsStorageRoot = path.join(storageRoot, "uploads");
 
 export const ocrScriptPath = resolvePath(process.env.OCR_SCRIPT ?? path.join(backendRoot, "src", "scripts", "paddle_ocr_runner.py"));
+export const pix2TextScriptPath = resolvePath(process.env.PIX2TEXT_SCRIPT ?? path.join(backendRoot, "src", "scripts", "pix2text_runner.py"));
 export const trainerScriptPath = resolvePath(process.env.TRAINER_SCRIPT ?? path.join(backendRoot, "src", "scripts", "train_classifiers.py"));
 export const pdfboxJarPath = resolvePath(process.env.PDFBOX_FONT_EXTRACTOR_JAR ?? path.join(backendRoot, "tools", "pdfbox-font-extractor", "target", "pdfbox-font-extractor.jar"));
 export const fontForgeScriptDir = resolvePath(process.env.FONTFORGE_SCRIPT_DIR ?? path.join(storageRoot, "fontforge"));

@@ -5,8 +5,9 @@ import { jobStore } from "../services/jobStore.js";
 import { loadProfile } from "../services/profileStore.js";
 import { updateProfileFromFix } from "../services/profileUpdater.js";
 import { getTrainingStatus, shouldTrain, triggerTraining } from "../services/trainer.js";
-// Combined review build only: final regeneration disabled for now.
-import { type SemanticBox, generateFinalPageFromBoxes } from "../services/semanticTagService.js";
+import { recognizeEquationCrop } from "../services/mathOcrService.js";
+import { latexToMathMl } from "../services/mathMlService.js";
+import { type SemanticBox, generateFinalPageFromBoxes, semanticBoxCropFileName, writeSemanticBoxCrop } from "../services/semanticTagService.js";
 import path from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 
@@ -74,12 +75,75 @@ fixesRouter.put("/boxes", async (req, res) => {
     const finalDir = jobStore.getFinalDir(jobId);
     await mkdir(finalDir, { recursive: true });
     const boxesPath = path.join(finalDir, `page-${pageNumber}.boxes.json`);
-    await writeFile(boxesPath, JSON.stringify({ boxes }, null, 2), "utf8");
 
     await generateFinalPageFromBoxes(jobId, pageIndex, boxes);
+    await writeFile(boxesPath, JSON.stringify({ boxes }, null, 2), "utf8");
     res.json({ ok: true, saved: boxes.length });
   } catch (error) {
     res.status(500).json({ message: error instanceof Error ? error.message : "Unable to save boxes" });
+  }
+});
+
+fixesRouter.post("/boxes/:boxId/recognize-equation", async (req, res) => {
+  try {
+    const params = req.params as { id: string; pageIndex: string; boxId: string };
+    const jobId = params.id;
+    const pageIndex = Number(params.pageIndex);
+    const pageNumber = pageIndex + 1;
+    const job = await jobStore.getJob(jobId);
+    if (!job) {
+      res.status(404).json({ message: "Job not found" });
+      return;
+    }
+
+    const finalDir = jobStore.getFinalDir(jobId);
+    const boxesPath = path.join(finalDir, `page-${pageNumber}.boxes.json`);
+    const body = req.body as { boxes?: SemanticBox[] };
+    const content = await readFile(boxesPath, "utf8").catch(() => "");
+    const payload = content ? JSON.parse(content) as { boxes?: SemanticBox[] } : { boxes: [] };
+    const boxes = Array.isArray(body.boxes)
+      ? body.boxes
+      : Array.isArray(payload.boxes)
+        ? payload.boxes
+        : [];
+    const box = boxes.find((candidate) => candidate.id === params.boxId);
+    if (!box) {
+      res.status(404).json({ message: "Box not found" });
+      return;
+    }
+    if (box.tag !== "equation") {
+      res.status(400).json({ message: "Box must be tagged as equation before math recognition." });
+      return;
+    }
+
+    const finalCropDir = path.join(finalDir, "images", "crops");
+    const cropFileName = semanticBoxCropFileName(pageNumber, box);
+    const cropPath = await writeSemanticBoxCrop(jobId, pageIndex, box, cropFileName, finalCropDir);
+    const result = await recognizeEquationCrop(cropPath);
+    const mathMlResult = result.latex ? latexToMathMl(result.latex) : { ok: false, error: "No LaTeX returned by Pix2Text." };
+    box.math = {
+      latex: result.latex,
+      mathml: mathMlResult.mathml,
+      mathmlStatus: mathMlResult.ok ? "ok" : "failed",
+      mathmlError: mathMlResult.error,
+      status: result.status,
+      engine: result.engine,
+      error: result.error,
+      cropFileName,
+      recognizedAt: new Date().toISOString()
+    };
+
+    await generateFinalPageFromBoxes(jobId, pageIndex, boxes);
+    await mkdir(finalDir, { recursive: true });
+    await writeFile(boxesPath, JSON.stringify({ boxes }, null, 2), "utf8");
+
+    res.json({
+      box,
+      result: { ...result, mathml: mathMlResult.mathml, mathmlStatus: mathMlResult.ok ? "ok" : "failed", mathmlError: mathMlResult.error },
+      cropUrl: `/storage/jobs/${encodeURIComponent(jobId)}/final/images/crops/${encodeURIComponent(cropFileName)}`
+    });
+  } catch (error) {
+    res.status(500).json({ message: error instanceof Error ? error.message : "Unable to recognize equation" });
   }
 });
 

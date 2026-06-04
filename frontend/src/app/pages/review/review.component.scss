@@ -140,6 +140,13 @@
   color: var(--text-dim);
 }
 
+.equation-status {
+  max-width: 520px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .frame-stack {
   position: relative;
   transform-origin: top left;
@@ -179,6 +186,11 @@
 .saved-box--img {
   border-color: rgba(245, 166, 35, 0.95);
   background: rgba(245, 166, 35, 0.12);
+}
+
+.saved-box--equation {
+  border-color: rgba(175, 122, 255, 0.95);
+  background: rgba(175, 122, 255, 0.12);
 }
 
 .saved-box--selected {

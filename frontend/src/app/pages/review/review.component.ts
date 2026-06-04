@@ -50,9 +50,15 @@ export class ReviewComponent {
   readonly selectedBoxId = signal<string | null>(null);
   readonly boxInteraction = signal<BoxInteraction | null>(null);
   readonly savingBoxes = signal(false);
+  readonly recognizingEquation = signal(false);
+  readonly equationMessage = signal("");
   readonly finalRefreshToken = signal(0);
   readonly showFinalPane = signal(false);
   readonly showPageNav = signal(true);
+  readonly selectedEquationBox = computed(() => {
+    const selectedBoxId = this.selectedBoxId();
+    return selectedBoxId ? this.boxes().find((box) => box.id === selectedBoxId && box.tag === "equation") ?? null : null;
+  });
 
   readonly reviewHtmlUrl = computed<SafeResourceUrl>(() => {
     const page = this.page();
@@ -184,6 +190,7 @@ export class ReviewComponent {
     this.selectedBoxId.set(null);
     this.boxInteraction.set(null);
     this.drawingBox.set(null);
+    this.equationMessage.set("");
     this.jobs.getResumeInfo(this.jobId()).subscribe({
       next: (resume) => this.draftPageMap.set(Object.fromEntries((resume.draftPageIndices ?? []).map((value) => [value, true]))),
       error: () => void 0
@@ -268,6 +275,20 @@ export class ReviewComponent {
     this.deleteBox(selectedBoxId);
   }
 
+  setActiveTag(tag: SemanticBoxTag): void {
+    this.activeTag.set(tag);
+    const selectedBoxId = this.selectedBoxId();
+    if (!selectedBoxId) return;
+    this.boxes.update((existing) => existing.map((box) => {
+      if (box.id !== selectedBoxId) return box;
+      return {
+        ...box,
+        tag,
+        math: tag === "equation" ? box.math : undefined
+      };
+    }));
+  }
+
   private finishDrawingBox(): void {
     const current = this.drawingBox();
     if (!current) return;
@@ -299,6 +320,33 @@ export class ReviewComponent {
         this.finalRefreshToken.update((value) => value + 1);
       },
       error: () => this.savingBoxes.set(false)
+    });
+  }
+
+  recognizeSelectedEquation(): void {
+    const page = this.page();
+    const box = this.selectedEquationBox();
+    if (!page || !box || this.recognizingEquation()) return;
+    this.recognizingEquation.set(true);
+    this.equationMessage.set("Reading equation...");
+    this.fixes.recognizeEquation(this.jobId(), page.pageIndex, box.id, this.boxes()).subscribe({
+      next: ({ box: updatedBox, result }) => {
+        this.boxes.update((existing) => this.orderBoxes(existing.map((candidate) => (candidate.id === updatedBox.id ? updatedBox : candidate))));
+        this.finalRefreshToken.update((value) => value + 1);
+        this.equationMessage.set(
+          result.status === "ok"
+            ? result.mathmlStatus === "ok"
+              ? "Equation read, converted to MathML, and saved."
+              : result.mathmlError ?? "Equation read, but MathML conversion failed."
+            : result.error ?? `Equation recognition ${result.status}.`
+        );
+        this.recognizingEquation.set(false);
+      },
+      error: (error) => {
+        const message = error?.error?.message ?? error?.message ?? "Unable to recognize equation.";
+        this.equationMessage.set(message);
+        this.recognizingEquation.set(false);
+      }
     });
   }
 

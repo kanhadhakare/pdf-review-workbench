@@ -23,6 +23,13 @@ export class FixService {
     return this.http.put<{ ok: true; saved: number }>(`/api/jobs/${jobId}/pages/${pageIndex}/boxes`, { boxes });
   }
 
+  recognizeEquation(jobId: string, pageIndex: number, boxId: string, boxes: SemanticBox[]): Observable<{ box: SemanticBox; result: { ok: boolean; status: "ok" | "unavailable" | "failed"; latex?: string; error?: string; mathml?: string; mathmlStatus?: "ok" | "failed"; mathmlError?: string }; cropUrl?: string }> {
+    return this.http.post<{ box: SemanticBox; result: { ok: boolean; status: "ok" | "unavailable" | "failed"; latex?: string; error?: string; mathml?: string; mathmlStatus?: "ok" | "failed"; mathmlError?: string }; cropUrl?: string }>(
+      `/api/jobs/${jobId}/pages/${pageIndex}/boxes/${boxId}/recognize-equation`,
+      { boxes }
+    );
+  }
+
   getDraft(jobId: string, pageIndex: number): Observable<DraftPageState> {
     return this.http.get<DraftPageState>(`/api/jobs/${jobId}/pages/${pageIndex}/draft`);
   }

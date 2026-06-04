@@ -3,8 +3,9 @@ import path from "node:path";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { jobStore } from "./jobStore.js";
 import { renderFinalBackgroundPng } from "./finalBackgroundService.js";
+import { latexToMathMl } from "./mathMlService.js";
 
-export type SemanticBoxTag = "p" | "h1" | "h2" | "h3" | "caption" | "img";
+export type SemanticBoxTag = "p" | "h1" | "h2" | "h3" | "caption" | "img" | "equation";
 
 export interface SemanticBox {
   id: string;
@@ -14,6 +15,28 @@ export interface SemanticBox {
   w: number;
   h: number;
   createdAt: string;
+  math?: {
+    latex?: string;
+    mathml?: string;
+    mathmlStatus?: "pending" | "ok" | "failed";
+    mathmlError?: string;
+    renderStyle?: {
+      fontSizePx: number;
+      color: string;
+      fontFamily: string;
+      cssFontFamily: string;
+      leftOffsetPx: number;
+      topOffsetPx: number;
+      widthPx: number;
+      heightPx: number;
+      sourceWordCount: number;
+    };
+    status?: "pending" | "ok" | "unavailable" | "failed";
+    engine?: string;
+    error?: string;
+    cropFileName?: string;
+    recognizedAt?: string;
+  };
 }
 
 type WordStyle = {
@@ -34,7 +57,9 @@ type WordStyle = {
 };
 
 type CssDeclarations = Record<string, string>;
-type TextSemanticBox = SemanticBox & { tag: Exclude<SemanticBoxTag, "img"> };
+type CropSemanticBox = SemanticBox & { tag: "img" | "equation" };
+type TextSemanticBox = SemanticBox & { tag: Exclude<SemanticBoxTag, CropSemanticBox["tag"]> };
+type EquationRenderStyle = NonNullable<NonNullable<SemanticBox["math"]>["renderStyle"]>;
 
 const INHERITED_WORD_STYLE_KEYS = [
   "font-family",
@@ -68,6 +93,19 @@ function wordBoxOverlapRatio(wordBounds: { x: number; y: number; w: number; h: n
   return boxIntersectionArea(wordBounds, box) / wordArea;
 }
 
+function wordCenterInsideBox(wordBounds: { x: number; y: number; w: number; h: number }, box: SemanticBox): boolean {
+  const centerX = wordBounds.x + wordBounds.w / 2;
+  const centerY = wordBounds.y + wordBounds.h / 2;
+  return centerX >= box.x && centerX <= box.x + box.w && centerY >= box.y && centerY <= box.y + box.h;
+}
+
+function wordCanBeClaimedByBox(wordBounds: { x: number; y: number; w: number; h: number }, box: SemanticBox, overlapRatio: number): boolean {
+  if (isCropBox(box)) {
+    return overlapRatio >= 0.7 || (overlapRatio >= 0.25 && wordCenterInsideBox(wordBounds, box));
+  }
+  return overlapRatio >= 0.15;
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -78,7 +116,11 @@ function escapeHtml(value: string): string {
 }
 
 function isTextBox(box: SemanticBox): box is TextSemanticBox {
-  return box.tag !== "img";
+  return box.tag !== "img" && box.tag !== "equation";
+}
+
+function isCropBox(box: SemanticBox): box is CropSemanticBox {
+  return box.tag === "img" || box.tag === "equation";
 }
 
 function cssSingleQuoted(value: string): string {
@@ -280,6 +322,92 @@ function getWordBounds(words: WordStyle[]): { x: number; y: number; w: number; h
   return { x: left, y: top, w: right - left, h: bottom - top };
 }
 
+function dominantValue(words: WordStyle[], selector: (word: WordStyle) => string, fallback: string): string {
+  if (!words.length) return fallback;
+  const weights = new Map<string, number>();
+  for (const word of words) {
+    const value = selector(word).trim();
+    if (!value) continue;
+    const weight = Math.max(1, word.w * word.h);
+    weights.set(value, (weights.get(value) ?? 0) + weight);
+  }
+  let bestValue = fallback;
+  let bestWeight = -1;
+  for (const [value, weight] of weights.entries()) {
+    if (weight > bestWeight) {
+      bestValue = value;
+      bestWeight = weight;
+    }
+  }
+  return bestValue;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function mathCssFontFamily(sourceFontFamily: string): string {
+  const fontFamily = sourceFontFamily.toLowerCase();
+  if (fontFamily.includes("symbol") || fontFamily.includes("extra")) {
+    return "'Cambria Math', 'STIX Two Math', 'Latin Modern Math', serif";
+  }
+  if (fontFamily.includes("times")) {
+    return "'Times New Roman', 'Cambria Math', 'STIX Two Math', serif";
+  }
+  if (fontFamily.includes("calibri")) {
+    return "'Cambria Math', Calibri, sans-serif";
+  }
+  return "'Cambria Math', 'STIX Two Math', 'Times New Roman', serif";
+}
+
+function inferEquationRenderStyle(box: SemanticBox, selectedWords: WordStyle[]): EquationRenderStyle {
+  const usefulWords = selectedWords.filter((word) => word.fontSizePx > 0 && word.w > 0 && word.h > 0);
+  if (!usefulWords.length) {
+    const fontSizePx = Math.max(8, box.h * 0.82);
+    return {
+      fontSizePx: Number(fontSizePx.toFixed(3)),
+      color: "#000000",
+      fontFamily: "",
+      cssFontFamily: "'Cambria Math', 'STIX Two Math', 'Times New Roman', serif",
+      leftOffsetPx: 0,
+      topOffsetPx: 0,
+      widthPx: Number(box.w.toFixed(3)),
+      heightPx: Number(box.h.toFixed(3)),
+      sourceWordCount: 0
+    };
+  }
+
+  const maxFontSize = Math.max(...usefulWords.map((word) => word.fontSizePx));
+  const baseWords = usefulWords.filter((word) => word.fontSizePx >= maxFontSize * 0.78);
+  const fontSizePx = clampNumber(median((baseWords.length ? baseWords : usefulWords).map((word) => word.fontSizePx)), 6, Math.max(8, box.h * 1.35));
+  const sourceBounds = getWordBounds(usefulWords);
+  const leftOffsetPx = clampNumber(sourceBounds.x - box.x, 0, Math.max(0, box.w - 1));
+  const topOffsetPx = clampNumber(sourceBounds.y - box.y, 0, Math.max(0, box.h - 1));
+  const widthPx = clampNumber(sourceBounds.w, 1, Math.max(1, box.w - leftOffsetPx));
+  const heightPx = clampNumber(sourceBounds.h, 1, Math.max(1, box.h - topOffsetPx));
+  const fontFamily = dominantValue(baseWords.length ? baseWords : usefulWords, (word) => word.fontFamily, "");
+
+  return {
+    fontSizePx: Number(fontSizePx.toFixed(3)),
+    color: dominantValue(usefulWords, (word) => word.color, "#000000"),
+    fontFamily,
+    cssFontFamily: mathCssFontFamily(fontFamily),
+    leftOffsetPx: Number(leftOffsetPx.toFixed(3)),
+    topOffsetPx: Number(topOffsetPx.toFixed(3)),
+    widthPx: Number(widthPx.toFixed(3)),
+    heightPx: Number(heightPx.toFixed(3)),
+    sourceWordCount: usefulWords.length
+  };
+}
+
+function applyEquationRenderStyle(box: CropSemanticBox, renderStyle: EquationRenderStyle): void {
+  if (box.tag !== "equation") return;
+  box.math = {
+    ...box.math,
+    renderStyle
+  };
+}
+
 function wordSpanHtml(pageNumber: number, word: WordStyle): string {
   return `<span class="page__word page${pageNumber}__word${word.index}" data-word-index="${word.index}">${escapeHtml(word.text)}</span>`;
 }
@@ -295,7 +423,11 @@ function safeFileToken(value: string): string {
   return value.replace(/[^A-Za-z0-9_-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 80) || "crop";
 }
 
-function pageElementId(pageNumber: number, type: "para" | "img", index: number): string {
+export function semanticBoxCropFileName(pageNumber: number, box: Pick<SemanticBox, "id">): string {
+  return `page-${pageNumber}-${safeFileToken(box.id)}.png`;
+}
+
+function pageElementId(pageNumber: number, type: "para" | "img" | "eq", index: number): string {
   return `page${String(pageNumber).padStart(4, "0")}_${type}${index}`;
 }
 
@@ -379,7 +511,12 @@ async function writeFinalPageImage(jobId: string, pageIndex: number, targetPath:
 
 async function writeFinalTextFile(targetPath: string, content: string): Promise<void> {
   const tempPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tempPath, content, "utf8");
+  try {
+    await writeFile(tempPath, content, "utf8");
+  } catch {
+    await writeFile(targetPath, content, "utf8");
+    return;
+  }
   try {
     await rename(tempPath, targetPath);
   } catch {
@@ -387,10 +524,20 @@ async function writeFinalTextFile(targetPath: string, content: string): Promise<
   }
 }
 
+async function writeBinaryFileOrKeepExisting(targetPath: string, content: Uint8Array): Promise<void> {
+  try {
+    await writeFile(targetPath, content);
+  } catch (error) {
+    const existing = await stat(targetPath).catch(() => null);
+    if (existing?.isFile()) return;
+    throw error;
+  }
+}
+
 async function writeImageCrops(
   jobId: string,
   pageIndex: number,
-  imageBlocks: Array<{ box: SemanticBox; fileName: string }>,
+  imageBlocks: Array<{ box: CropSemanticBox; fileName: string }>,
   finalCropDir: string
 ): Promise<void> {
   if (!imageBlocks.length) return;
@@ -405,8 +552,25 @@ async function writeImageCrops(
     const canvas = createCanvas(sourceW, sourceH);
     const context = canvas.getContext("2d");
     context.drawImage(sourceImage, sourceX, sourceY, sourceW, sourceH, 0, 0, sourceW, sourceH);
-    await writeFile(path.join(finalCropDir, block.fileName), new Uint8Array(canvas.toBuffer("image/png")));
+    await writeBinaryFileOrKeepExisting(path.join(finalCropDir, block.fileName), new Uint8Array(canvas.toBuffer("image/png")));
   }
+}
+
+export async function writeSemanticBoxCrop(jobId: string, pageIndex: number, box: Pick<SemanticBox, "x" | "y" | "w" | "h">, fileName: string, finalCropDir: string): Promise<string> {
+  await mkdir(finalCropDir, { recursive: true });
+  const sourceImage = await loadImage(jobStore.getImagePath(jobId, pageIndex));
+  const sourceWidth = Math.max(1, sourceImage.width);
+  const sourceHeight = Math.max(1, sourceImage.height);
+  const sourceX = Math.min(sourceWidth - 1, Math.max(0, Math.round(box.x)));
+  const sourceY = Math.min(sourceHeight - 1, Math.max(0, Math.round(box.y)));
+  const sourceW = Math.max(1, Math.min(Math.round(box.w), sourceWidth - sourceX));
+  const sourceH = Math.max(1, Math.min(Math.round(box.h), sourceHeight - sourceY));
+  const canvas = createCanvas(sourceW, sourceH);
+  const context = canvas.getContext("2d");
+  context.drawImage(sourceImage, sourceX, sourceY, sourceW, sourceH, 0, 0, sourceW, sourceH);
+  const cropPath = path.join(finalCropDir, fileName);
+  await writeBinaryFileOrKeepExisting(cropPath, new Uint8Array(canvas.toBuffer("image/png")));
+  return cropPath;
 }
 
 export async function generateFinalPageFromBoxes(jobId: string, pageIndex: number, boxes: SemanticBox[]): Promise<void> {
@@ -439,13 +603,13 @@ export async function generateFinalPageFromBoxes(jobId: string, pageIndex: numbe
     let bestOverlapRatio = 0;
     boxes.forEach((box, index) => {
       const overlapRatio = wordBoxOverlapRatio(wordBounds, box);
-      if (overlapRatio <= 0) return;
+      if (!wordCanBeClaimedByBox(wordBounds, box, overlapRatio)) return;
       if (overlapRatio > bestOverlapRatio) {
         bestBoxIndex = index;
         bestOverlapRatio = overlapRatio;
       }
     });
-    if (bestBoxIndex >= 0 && bestOverlapRatio >= 0.15) {
+    if (bestBoxIndex >= 0) {
       paraBlocks[bestBoxIndex].wordIndices.push(word.index);
     }
   }
@@ -488,14 +652,25 @@ export async function generateFinalPageFromBoxes(jobId: string, pageIndex: numbe
       bounds: { x: number; y: number; w: number; h: number };
     } => Boolean(block));
 
-  const imageBlocks = paraBlocks
-    .filter((block) => block.box.tag === "img")
-    .map((block, i) => ({
-      box: block.box,
-      elementId: pageElementId(pageNumber, "img", i + 1),
-      className: `page${pageNumber}-img${i + 1}`,
-      fileName: `page-${pageNumber}-${safeFileToken(block.box.id)}.png`
-    }));
+  const cropBlocks = paraBlocks
+    .filter((block): block is { box: CropSemanticBox; wordIndices: number[] } => isCropBox(block.box))
+    .map((block, i) => {
+      const selectedWords = block.wordIndices
+        .map((wordIndex) => byIndex.get(wordIndex))
+        .filter((word): word is WordStyle => Boolean(word));
+      const renderStyle = block.box.tag === "equation"
+        ? inferEquationRenderStyle(block.box, selectedWords)
+        : null;
+      if (renderStyle) applyEquationRenderStyle(block.box, renderStyle);
+      return {
+        box: block.box,
+        elementId: pageElementId(pageNumber, block.box.tag === "equation" ? "eq" : "img", i + 1),
+        className: `page${pageNumber}-${block.box.tag === "equation" ? "eq" : "img"}${i + 1}`,
+        fileName: semanticBoxCropFileName(pageNumber, block.box),
+        selectedWords,
+        renderStyle
+      };
+    });
 
   const styleClassRegistry = createStyleClassRegistry();
   const baseParaClass = styleClassRegistry.use("s", {
@@ -557,8 +732,31 @@ export async function generateFinalPageFromBoxes(jobId: string, pageIndex: numbe
     .map((w) => wordSpanHtml(pageNumber, w))
     .join("\n");
 
-  const imageElements = imageBlocks
-    .map((block) => `<img id="${block.elementId}" class="page__crop ${block.className}" src="./images/crops/${escapeHtml(block.fileName)}" alt="">`)
+  const imageElements = cropBlocks
+    .map((block) => {
+      if (block.box.tag === "equation") {
+        const latex = block.box.math?.latex ?? "";
+        const status = block.box.math?.status ?? "pending";
+        const existingMathMl = block.box.math?.mathml?.trim() ?? "";
+        const generatedMathMl = !existingMathMl && latex ? latexToMathMl(latex) : null;
+        const mathml = existingMathMl || generatedMathMl?.mathml || "";
+        const mathmlStatus = mathml ? "ok" : latex ? "failed" : "pending";
+        const mathmlError = block.box.math?.mathmlError ?? generatedMathMl?.error ?? "";
+        const latexAttr = latex ? ` data-latex="${escapeHtml(latex)}"` : "";
+        const errorAttr = status !== "ok" && block.box.math?.error ? ` data-math-error="${escapeHtml(block.box.math.error)}"` : "";
+        const mathmlErrorAttr = mathmlError ? ` data-mathml-error="${escapeHtml(mathmlError)}"` : "";
+        const mathmlAttr = ` data-mathml-status="${escapeHtml(mathmlStatus)}"`;
+        const renderStyle = block.renderStyle;
+        const styleAttrs = renderStyle
+          ? ` data-source-font-size="${escapeHtml(String(renderStyle.fontSizePx))}" data-source-font-family="${escapeHtml(renderStyle.fontFamily)}" data-source-word-count="${escapeHtml(String(renderStyle.sourceWordCount))}"`
+          : "";
+        const className = ["page__crop", "math-zone", "equation-zone", mathml ? "math-zone--mathml" : "math-zone--crop", block.className].join(" ");
+        const cropImage = `<img class="math-crop-fallback" src="./images/crops/${escapeHtml(block.fileName)}" alt="Equation">`;
+        const mathMlHtml = mathml ? `<span class="mathml-render">${mathml}</span>` : "";
+        return `<figure id="${block.elementId}" class="${className}" data-box-id="${escapeHtml(block.box.id)}" data-math-status="${escapeHtml(status)}"${mathmlAttr}${latexAttr}${styleAttrs}${errorAttr}${mathmlErrorAttr}>${mathMlHtml}${cropImage}${latex ? `<figcaption class="math-latex">${escapeHtml(latex)}</figcaption>` : ""}</figure>`;
+      }
+      return `<img id="${block.elementId}" class="page__crop ${block.className}" src="./images/crops/${escapeHtml(block.fileName)}" alt="">`;
+    })
     .join("\n");
 
   const finalHtml = `<!doctype html>
@@ -590,12 +788,26 @@ ${imageElements}
 .page__para { position: absolute; margin: 0; padding: 0; border: 0; background: transparent; white-space: pre; overflow: visible; z-index: 1; }
 .page__para--absolute .page__word { position: absolute; margin: 0; padding: 0; white-space: nowrap; overflow: visible; background: transparent; }
 .page__line { display: flex; align-items: flex-start; margin: 0; padding: 0; box-sizing: border-box; white-space: nowrap; overflow: visible; }
-.page__crop { position: absolute; display: block; margin: 0; padding: 0; border: 0; object-fit: fill; z-index: 2; }`;
+.page__crop { position: absolute; display: block; margin: 0; padding: 0; border: 0; object-fit: fill; z-index: 2; }
+.math-zone { background: transparent; overflow: visible; }
+.math-crop-fallback { display: block; width: 100%; height: 100%; object-fit: fill; }
+.math-zone--mathml .math-crop-fallback { display: none; }
+.mathml-render { position: absolute; display: block; color: #000; line-height: 1; overflow: visible; transform-origin: top left; }
+.mathml-render math { font-size: 1em; }
+.math-latex { display: none; }`;
 
   const paraCssBlocks: string[] = [];
   const lineCssBlocks: string[] = [];
   const semanticWordRules: string[] = [];
-  const imageCssBlocks = imageBlocks.map((block) => `#${block.elementId} { left: ${formatPx(block.box.x)}; top: ${formatPx(block.box.y)}; width: ${formatPx(block.box.w)}; height: ${formatPx(block.box.h)}; }`);
+  const imageCssBlocks = cropBlocks.map((block) => {
+    const renderStyle = block.renderStyle;
+    const fontSize = renderStyle ? ` font-size: ${formatPx(renderStyle.fontSizePx)};` : "";
+    const color = renderStyle ? ` color: ${renderStyle.color};` : "";
+    const fontFamily = renderStyle ? ` font-family: ${renderStyle.cssFontFamily};` : "";
+    const baseRule = `#${block.elementId} { left: ${formatPx(block.box.x)}; top: ${formatPx(block.box.y)}; width: ${formatPx(block.box.w)}; height: ${formatPx(block.box.h)};${fontSize}${color}${fontFamily} }`;
+    if (!renderStyle) return baseRule;
+    return `${baseRule}\n#${block.elementId} .mathml-render { left: ${formatPx(renderStyle.leftOffsetPx)}; top: ${formatPx(renderStyle.topOffsetPx)}; width: ${formatPx(renderStyle.widthPx)}; height: ${formatPx(renderStyle.heightPx)}; }`;
+  });
   for (const block of semanticModels) {
     if (block.isAbsolute) {
       paraCssBlocks.push(`#${block.elementId} { left: ${formatPx(block.bounds.x)}; top: ${formatPx(block.bounds.y)}; width: ${formatPx(block.bounds.w)}; height: ${formatPx(block.bounds.h)}; }`);
@@ -642,7 +854,7 @@ ${imageElements}
 
   // Copy page image and all fonts into final (simple, safe).
   await writeFinalPageImage(jobId, pageIndex, path.join(finalImagesDir, `page-${pageNumber}.png`));
-  await writeImageCrops(jobId, pageIndex, imageBlocks, finalCropDir);
+  await writeImageCrops(jobId, pageIndex, cropBlocks, finalCropDir);
   const fontEntries = await readdir(jobStore.getFontsDir(jobId)).catch(() => []);
   for (const entry of fontEntries) {
     if (!entry || entry.endsWith(".json")) continue;

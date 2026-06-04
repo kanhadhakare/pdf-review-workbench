@@ -5,9 +5,9 @@ export enum ExtractionStatus {
   failed = "failed"
 }
 
-export type SemanticTag = "h1" | "h2" | "h3" | "p" | "span" | "caption" | "artifact" | "img";
+export type SemanticTag = "h1" | "h2" | "h3" | "p" | "span" | "caption" | "artifact" | "img" | "equation";
 
-export type SemanticBoxTag = "p" | "h1" | "h2" | "h3" | "caption" | "img";
+export type SemanticBoxTag = "p" | "h1" | "h2" | "h3" | "caption" | "img" | "equation";
 
 export interface SemanticBox {
   id: string;
@@ -17,6 +17,28 @@ export interface SemanticBox {
   w: number;
   h: number;
   createdAt: string;
+  math?: {
+    latex?: string;
+    mathml?: string;
+    mathmlStatus?: "pending" | "ok" | "failed";
+    mathmlError?: string;
+    renderStyle?: {
+      fontSizePx: number;
+      color: string;
+      fontFamily: string;
+      cssFontFamily: string;
+      leftOffsetPx: number;
+      topOffsetPx: number;
+      widthPx: number;
+      heightPx: number;
+      sourceWordCount: number;
+    };
+    status?: "pending" | "ok" | "unavailable" | "failed";
+    engine?: string;
+    error?: string;
+    cropFileName?: string;
+    recognizedAt?: string;
+  };
 }
 
 export interface BlockStyles {
