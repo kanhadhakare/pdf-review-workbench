@@ -1,5 +1,14 @@
 storage/*
 .python311/*
 target/*
-./*.log
+*.log
+*.log.*
+*.tmp
+*.bak
+*.old
+out/
+frontend/.angular/
+backend/tmp-*
+backend/tmpSample.pdf
 ./*.env
+cloudflared.log

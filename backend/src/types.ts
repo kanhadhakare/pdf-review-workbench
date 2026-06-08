@@ -5,7 +5,7 @@ export enum ExtractionStatus {
   failed = "failed"
 }
 
-export type SemanticTag = "h1" | "h2" | "h3" | "p" | "span" | "caption" | "artifact" | "img" | "equation";
+export type SemanticTag = "h1" | "h2" | "h3" | "p" | "span" | "caption" | "table" | "artifact" | "img" | "equation";
 
 export interface BlockStyles {
   textIndent: number;
@@ -101,6 +101,25 @@ export interface DraftPageState {
   blocks: TextBlock[];
   pendingFixes: FixDelta[];
   hiddenWordIds: string[];
+  updatedAt: string;
+}
+
+export type SpanCorrectionScope = "span" | "page-font-size" | "book-font-size";
+
+export interface SpanCorrection {
+  id: string;
+  scope: SpanCorrectionScope;
+  pageIndex: number;
+  wordIndex: number;
+  cssClassName?: string;
+  fontFamily: string;
+  fontSizePx: number;
+  fontWeight: string;
+  fontStyle: string;
+  topDeltaPx: number;
+  leftDeltaPx: number;
+  letterSpacingPx: number;
+  createdAt: string;
   updatedAt: string;
 }
 

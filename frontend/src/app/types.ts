@@ -5,9 +5,9 @@ export enum ExtractionStatus {
   failed = "failed"
 }
 
-export type SemanticTag = "h1" | "h2" | "h3" | "p" | "span" | "caption" | "artifact" | "img" | "equation";
+export type SemanticTag = "h1" | "h2" | "h3" | "p" | "span" | "caption" | "table" | "artifact" | "img" | "equation";
 
-export type SemanticBoxTag = "p" | "h1" | "h2" | "h3" | "caption" | "img" | "equation";
+export type SemanticBoxTag = "p" | "h1" | "h2" | "h3" | "caption" | "table" | "img" | "equation";
 
 export interface SemanticBox {
   id: string;
@@ -17,6 +17,7 @@ export interface SemanticBox {
   w: number;
   h: number;
   createdAt: string;
+  readingOrder?: number;
   math?: {
     latex?: string;
     mathml?: string;
@@ -39,6 +40,25 @@ export interface SemanticBox {
     cropFileName?: string;
     recognizedAt?: string;
   };
+}
+
+export type SpanCorrectionScope = "span" | "page-font-size" | "book-font-size";
+
+export interface SpanCorrection {
+  id: string;
+  scope: SpanCorrectionScope;
+  pageIndex: number;
+  wordIndex: number;
+  cssClassName?: string;
+  fontFamily: string;
+  fontSizePx: number;
+  fontWeight: string;
+  fontStyle: string;
+  topDeltaPx: number;
+  leftDeltaPx: number;
+  letterSpacingPx: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface BlockStyles {

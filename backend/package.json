@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node ./scripts/run-backend-dev.mjs",
+    "dev": "node ./scripts/run-backend-dev.mjs --port 3001",
     "build": "tsc -p tsconfig.json",
-    "start": "node ./scripts/run-backend-start.mjs",
+    "start": "node ./scripts/run-backend-start.mjs --port 3001",
     "ensure:pdfbox-font-extractor": "node ./scripts/ensure-pdfbox-font-extractor.mjs",
     "build:pdfbox-font-extractor": "node ./scripts/ensure-pdfbox-font-extractor.mjs --force"
   },

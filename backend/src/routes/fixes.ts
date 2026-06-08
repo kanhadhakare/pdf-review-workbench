@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { type DraftPageState, type FixDelta, type PageVisit } from "../types.js";
+import { type DraftPageState, type FixDelta, type PageVisit, type SpanCorrection } from "../types.js";
 import { buildEditSummary, saveFix, saveVisit } from "../services/fixStore.js";
 import { jobStore } from "../services/jobStore.js";
 import { loadProfile } from "../services/profileStore.js";
@@ -8,10 +8,35 @@ import { getTrainingStatus, shouldTrain, triggerTraining } from "../services/tra
 import { recognizeEquationCrop } from "../services/mathOcrService.js";
 import { latexToMathMl } from "../services/mathMlService.js";
 import { type SemanticBox, generateFinalPageFromBoxes, semanticBoxCropFileName, writeSemanticBoxCrop } from "../services/semanticTagService.js";
+import { getSpanCorrections, saveSpanCorrection } from "../services/spanCorrectionService.js";
 import path from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 export const fixesRouter = Router({ mergeParams: true });
+
+async function recognizeEquationBoxes(jobId: string, pageIndex: number, boxes: SemanticBox[]): Promise<void> {
+  const pageNumber = pageIndex + 1;
+  const finalDir = jobStore.getFinalDir(jobId);
+  const finalCropDir = path.join(finalDir, "images", "crops");
+  for (const box of boxes) {
+    if (box.tag !== "equation") continue;
+    const cropFileName = semanticBoxCropFileName(pageNumber, box);
+    const cropPath = await writeSemanticBoxCrop(jobId, pageIndex, box, cropFileName, finalCropDir);
+    const result = await recognizeEquationCrop(cropPath);
+    const mathMlResult = result.latex ? latexToMathMl(result.latex) : { ok: false, error: "No LaTeX returned by Pix2Text." };
+    box.math = {
+      latex: result.latex,
+      mathml: mathMlResult.mathml,
+      mathmlStatus: mathMlResult.ok ? "ok" : "failed",
+      mathmlError: mathMlResult.error,
+      status: result.status,
+      engine: result.engine,
+      error: result.error,
+      cropFileName,
+      recognizedAt: new Date().toISOString()
+    };
+  }
+}
 
 fixesRouter.post("/fixes", async (req, res) => {
   try {
@@ -70,15 +95,18 @@ fixesRouter.put("/boxes", async (req, res) => {
     const jobId = params.id;
     const pageIndex = Number(params.pageIndex);
     const pageNumber = pageIndex + 1;
-    const body = req.body as { boxes?: SemanticBox[] };
+    const body = req.body as { boxes?: SemanticBox[]; recognizeEquations?: boolean };
     const boxes = Array.isArray(body.boxes) ? body.boxes : [];
     const finalDir = jobStore.getFinalDir(jobId);
     await mkdir(finalDir, { recursive: true });
     const boxesPath = path.join(finalDir, `page-${pageNumber}.boxes.json`);
 
+    if (body.recognizeEquations) {
+      await recognizeEquationBoxes(jobId, pageIndex, boxes);
+    }
     await generateFinalPageFromBoxes(jobId, pageIndex, boxes);
     await writeFile(boxesPath, JSON.stringify({ boxes }, null, 2), "utf8");
-    res.json({ ok: true, saved: boxes.length });
+    res.json({ ok: true, saved: boxes.length, boxes });
   } catch (error) {
     res.status(500).json({ message: error instanceof Error ? error.message : "Unable to save boxes" });
   }
@@ -116,22 +144,7 @@ fixesRouter.post("/boxes/:boxId/recognize-equation", async (req, res) => {
       return;
     }
 
-    const finalCropDir = path.join(finalDir, "images", "crops");
-    const cropFileName = semanticBoxCropFileName(pageNumber, box);
-    const cropPath = await writeSemanticBoxCrop(jobId, pageIndex, box, cropFileName, finalCropDir);
-    const result = await recognizeEquationCrop(cropPath);
-    const mathMlResult = result.latex ? latexToMathMl(result.latex) : { ok: false, error: "No LaTeX returned by Pix2Text." };
-    box.math = {
-      latex: result.latex,
-      mathml: mathMlResult.mathml,
-      mathmlStatus: mathMlResult.ok ? "ok" : "failed",
-      mathmlError: mathMlResult.error,
-      status: result.status,
-      engine: result.engine,
-      error: result.error,
-      cropFileName,
-      recognizedAt: new Date().toISOString()
-    };
+    await recognizeEquationBoxes(jobId, pageIndex, [box]);
 
     await generateFinalPageFromBoxes(jobId, pageIndex, boxes);
     await mkdir(finalDir, { recursive: true });
@@ -139,8 +152,16 @@ fixesRouter.post("/boxes/:boxId/recognize-equation", async (req, res) => {
 
     res.json({
       box,
-      result: { ...result, mathml: mathMlResult.mathml, mathmlStatus: mathMlResult.ok ? "ok" : "failed", mathmlError: mathMlResult.error },
-      cropUrl: `/storage/jobs/${encodeURIComponent(jobId)}/final/images/crops/${encodeURIComponent(cropFileName)}`
+      result: {
+        ok: box.math?.status === "ok",
+        status: box.math?.status ?? "failed",
+        latex: box.math?.latex,
+        error: box.math?.error,
+        mathml: box.math?.mathml,
+        mathmlStatus: box.math?.mathmlStatus,
+        mathmlError: box.math?.mathmlError
+      },
+      cropUrl: box.math?.cropFileName ? `/storage/jobs/${encodeURIComponent(jobId)}/final/images/crops/${encodeURIComponent(box.math.cropFileName)}` : undefined
     });
   } catch (error) {
     res.status(500).json({ message: error instanceof Error ? error.message : "Unable to recognize equation" });
@@ -162,6 +183,81 @@ fixesRouter.post("/visit", async (req, res) => {
     res.json({ ok: true });
   } catch (error) {
     res.status(500).json({ message: error instanceof Error ? error.message : "Unable to record visit" });
+  }
+});
+
+fixesRouter.get("/span-corrections", async (req, res) => {
+  try {
+    const params = req.params as { id: string };
+    const jobId = params.id;
+    const job = await jobStore.getJob(jobId);
+    if (!job) {
+      res.status(404).json({ message: "Job not found" });
+      return;
+    }
+    res.json({ corrections: await getSpanCorrections(jobId) });
+  } catch (error) {
+    res.status(500).json({ message: error instanceof Error ? error.message : "Unable to load span corrections" });
+  }
+});
+
+fixesRouter.put("/span-corrections", async (req, res) => {
+  try {
+    const params = req.params as { id: string };
+    const jobId = params.id;
+    const job = await jobStore.getJob(jobId);
+    if (!job) {
+      res.status(404).json({ message: "Job not found" });
+      return;
+    }
+    const body = req.body as { correction?: Partial<SpanCorrection> };
+    const correction = body.correction;
+    if (!correction) {
+      res.status(400).json({ message: "Expected correction payload" });
+      return;
+    }
+    const scope = correction.scope;
+    if (scope !== "span" && scope !== "page-font-size" && scope !== "book-font-size") {
+      res.status(400).json({ message: "Invalid correction scope" });
+      return;
+    }
+    const pageIndex = Number(correction.pageIndex);
+    const wordIndex = Number(correction.wordIndex);
+    const fontSizePx = Number(correction.fontSizePx);
+    const topDeltaPx = Number(correction.topDeltaPx ?? 0);
+    const leftDeltaPx = Number(correction.leftDeltaPx ?? 0);
+    const letterSpacingPx = Number(correction.letterSpacingPx ?? 0);
+    if (![pageIndex, wordIndex, fontSizePx, topDeltaPx, leftDeltaPx, letterSpacingPx].every(Number.isFinite)) {
+      res.status(400).json({ message: "Correction has invalid numeric values" });
+      return;
+    }
+    const result = await saveSpanCorrection(jobId, {
+      id: typeof correction.id === "string" ? correction.id : undefined,
+      scope,
+      pageIndex,
+      wordIndex,
+      cssClassName: typeof correction.cssClassName === "string" ? correction.cssClassName : undefined,
+      fontFamily: String(correction.fontFamily ?? "").trim(),
+      fontSizePx,
+      fontWeight: String(correction.fontWeight ?? "normal").trim() || "normal",
+      fontStyle: String(correction.fontStyle ?? "normal").trim() || "normal",
+      topDeltaPx,
+      leftDeltaPx,
+      letterSpacingPx
+    });
+    for (const affectedPageIndex of result.affectedPages) {
+      const affectedPageNumber = affectedPageIndex + 1;
+      const boxesPath = path.join(jobStore.getFinalDir(jobId), `page-${affectedPageNumber}.boxes.json`);
+      const content = await readFile(boxesPath, "utf8").catch(() => "");
+      if (!content) continue;
+      const payload = JSON.parse(content) as { boxes?: SemanticBox[] };
+      if (Array.isArray(payload.boxes)) {
+        await generateFinalPageFromBoxes(jobId, affectedPageIndex, payload.boxes);
+      }
+    }
+    res.json({ ok: true, corrections: result.corrections, affectedPages: result.affectedPages });
+  } catch (error) {
+    res.status(500).json({ message: error instanceof Error ? error.message : "Unable to save span correction" });
   }
 });
 

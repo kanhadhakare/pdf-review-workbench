@@ -1,4 +1,11 @@
 <main class="review-page" [class.review-page--nav-hidden]="!showPageNav()">
+  <div class="blocking-overlay" *ngIf="blockingMessage()">
+    <div class="blocking-overlay__card">
+      <div class="blocking-overlay__spinner" aria-hidden="true"></div>
+      <strong>{{ blockingMessage() }}</strong>
+      <span>Do not close or change page until this finishes.</span>
+    </div>
+  </div>
   <aside class="review-page__nav" *ngIf="showPageNav()">
     <app-page-nav
       [pageCount]="pageCount()"
@@ -12,45 +19,120 @@
     <header class="toolbar">
       <a routerLink="/">Back</a>
       <strong>Page {{ pageIndex() + 1 }} of {{ pageCount() }}</strong>
-      <span *ngIf="page()">Confidence: {{ page()!.confidence.toFixed(2) }}</span>
-      <span>Edits this page: {{ editCountMap()[pageIndex()] ?? 0 }}</span>
-      <span>Total session edits: {{ editSummary()?.totalEdits ?? 0 }}</span>
+      <button type="button" (click)="showStatsPopup.set(true)" [disabled]="!!blockingMessage()">Page Info</button>
+      <button type="button" (click)="openCorrectionPopup()" [disabled]="!!blockingMessage()">Span Correction</button>
       <label class="mode-toggle">
-        <input type="checkbox" [checked]="boxMode()" (change)="boxMode.set(!boxMode())">
+        <input type="checkbox" [checked]="boxMode()" [disabled]="!!blockingMessage()" (change)="boxMode.set(!boxMode())">
         <span>Box mode</span>
       </label>
       <label class="mode-toggle">
-        <input type="checkbox" [checked]="showFinalPane()" (change)="showFinalPane.set(!showFinalPane())">
+        <input type="checkbox" [checked]="showFinalPane()" [disabled]="!!blockingMessage()" (change)="showFinalPane.set(!showFinalPane())">
         <span>Show final</span>
       </label>
       <label class="mode-toggle">
-        <input type="checkbox" [checked]="showPageNav()" (change)="showPageNav.set(!showPageNav())">
+        <input type="checkbox" [checked]="showPageNav()" [disabled]="!!blockingMessage()" (change)="showPageNav.set(!showPageNav())">
         <span>Show pages</span>
       </label>
-      <select [ngModel]="activeTag()" (ngModelChange)="setActiveTag($event)" [disabled]="!boxMode()">
+      <select [ngModel]="activeTag()" (ngModelChange)="setActiveTag($event)" [disabled]="!boxMode() || !!blockingMessage()">
         <option value="p">p</option>
         <option value="h1">h1</option>
         <option value="h2">h2</option>
         <option value="h3">h3</option>
         <option value="caption">caption</option>
+        <option value="table">table</option>
         <option value="img">img crop</option>
         <option value="equation">equation</option>
       </select>
-      <button type="button" (click)="saveBoxes()" [disabled]="!boxMode() || savingBoxes()">{{ savingBoxes() ? 'Saving...' : 'Save Boxes' }}</button>
-      <button type="button" (click)="recognizeSelectedEquation()" [disabled]="!boxMode() || !selectedEquationBox() || recognizingEquation()">{{ recognizingEquation() ? 'Reading math...' : 'Read Equation' }}</button>
-      <button type="button" (click)="openFinalOutput()" [disabled]="!page()">Open Final</button>
-      <button type="button" (click)="deleteSelectedBox()" [disabled]="!boxMode() || !selectedBoxId()">Delete Box</button>
-      <button type="button" (click)="previousPage()" [disabled]="pageIndex() === 0">Previous</button>
-      <button type="button" (click)="nextPage()" [disabled]="pageIndex() >= pageCount() - 1">Next</button>
+      <button type="button" (click)="saveBoxes()" [disabled]="!boxMode() || savingBoxes() || !!blockingMessage()">{{ savingBoxes() ? 'Saving...' : 'Save Boxes' }}</button>
+      <button type="button" (click)="recognizeSelectedEquation()" [disabled]="!boxMode() || !selectedEquationBox() || recognizingEquation() || !!blockingMessage()">{{ recognizingEquation() ? 'Reading math...' : 'Read Equation' }}</button>
+      <button type="button" (click)="openFinalOutput()" [disabled]="!page() || !!blockingMessage()">Open Final</button>
+      <button type="button" (click)="deleteSelectedBox()" [disabled]="!boxMode() || !selectedBoxId() || !!blockingMessage()">Delete Box</button>
+      <button type="button" (click)="previousPage()" [disabled]="pageIndex() === 0 || !!blockingMessage()">Previous</button>
+      <button type="button" (click)="nextPage()" [disabled]="pageIndex() >= pageCount() - 1 || !!blockingMessage()">Next</button>
       <span class="equation-status" *ngIf="equationMessage()">{{ equationMessage() }}</span>
     </header>
+
+    <div class="review-popup" *ngIf="showStatsPopup()" (click)="showStatsPopup.set(false)">
+      <section class="review-popup__card" (click)="$event.stopPropagation()">
+        <header class="review-popup__header">
+          <strong>Page Info</strong>
+          <button type="button" (click)="showStatsPopup.set(false)">&times;</button>
+        </header>
+        <dl class="review-popup__stats">
+          <div>
+            <dt>Confidence</dt>
+            <dd>{{ page()?.confidence?.toFixed(2) ?? '-' }}</dd>
+          </div>
+          <div>
+            <dt>Edits this page</dt>
+            <dd>{{ editCountMap()[pageIndex()] ?? 0 }}</dd>
+          </div>
+          <div>
+            <dt>Total session edits</dt>
+            <dd>{{ editSummary()?.totalEdits ?? 0 }}</dd>
+          </div>
+        </dl>
+      </section>
+    </div>
+
+    <div class="review-popup review-popup--right" *ngIf="showCorrectionPopup()" (click)="closeCorrectionPopup()">
+      <section
+        class="review-popup__card review-popup__card--wide"
+        [style.transform]="'translate(' + correctionDrawerOffset().x + 'px, ' + correctionDrawerOffset().y + 'px)'"
+        (click)="$event.stopPropagation()">
+        <header class="review-popup__header review-popup__header--draggable" (mousedown)="startCorrectionDrawerDrag($event)">
+          <strong>Span Correction</strong>
+          <button type="button" (click)="closeCorrectionPopup()">&times;</button>
+        </header>
+        <p class="review-popup__hint">Click any word in the review page, or enter a word CSS class manually.</p>
+        <div class="span-correction-panel__selected" *ngIf="selectedReviewSpan() as span; else noSpanSelected">
+          <strong>Selected span:</strong>
+          <span>#{{ span.wordIndex }} "{{ span.text }}"</span>
+          <span>{{ span.fontFamily }} / {{ span.fontSizePx }}px / {{ span.fontWeight }} / {{ span.fontStyle }}</span>
+          <span>Current top: {{ span.originalTopPx.toFixed(2) }}px</span>
+          <span>Current left: {{ span.originalLeftPx.toFixed(2) }}px</span>
+        </div>
+        <ng-template #noSpanSelected>
+          <span class="review-popup__hint">No span selected. Manual class correction applies to one class only.</span>
+        </ng-template>
+        <label>
+          CSS class
+          <input type="text" [ngModel]="correctionClassName()" (ngModelChange)="correctionClassName.set($event)" placeholder="page5__word104" [disabled]="savingCorrection() || !!blockingMessage()">
+        </label>
+        <label>
+          Scope
+          <select [ngModel]="correctionScope()" (ngModelChange)="correctionScope.set($event)" [disabled]="!selectedReviewSpan() || savingCorrection() || !!blockingMessage()">
+            <option value="span">This word</option>
+            <option value="page-font-size">Same page</option>
+            <option value="book-font-size">All pages</option>
+          </select>
+        </label>
+        <label>
+          Top correction px
+          <input type="number" step="0.25" [ngModel]="correctionTopDelta()" (ngModelChange)="updateCorrectionTopDelta(+$event)" [disabled]="savingCorrection() || !!blockingMessage()">
+        </label>
+        <label>
+          Left correction px
+          <input type="number" step="0.25" [ngModel]="correctionLeftDelta()" (ngModelChange)="updateCorrectionLeftDelta(+$event)" [disabled]="savingCorrection() || !!blockingMessage()">
+        </label>
+        <label>
+          Letter spacing px
+          <input type="number" step="0.25" [ngModel]="correctionLetterSpacing()" (ngModelChange)="updateCorrectionLetterSpacing(+$event)" [disabled]="savingCorrection() || !!blockingMessage()">
+        </label>
+        <div class="review-popup__actions">
+          <button type="button" (click)="applySpanCorrection()" [disabled]="(!selectedReviewSpan() && !correctionClassName()) || savingCorrection() || !!blockingMessage()">{{ savingCorrection() ? 'Applying...' : 'Apply Correction' }}</button>
+          <button type="button" (click)="closeCorrectionPopup()" [disabled]="savingCorrection()">Cancel</button>
+          <span class="span-correction-panel__message" *ngIf="correctionMessage()">{{ correctionMessage() }}</span>
+        </div>
+      </section>
+    </div>
 
     <section class="review-workspace" [class.review-workspace--side-by-side]="showFinalPane()">
       <div #editorViewport class="surface surface--single surface--review" *ngIf="page() as currentPage">
         <div class="pane-title" *ngIf="showFinalPane()">Review</div>
         <div class="fit-box" [style.width.px]="scaledWidth()" [style.height.px]="scaledHeight()">
           <div class="frame-stack" [style.width.px]="currentPage.pageWidth" [style.height.px]="currentPage.pageHeight" [style.transform]="transform()">
-            <iframe class="html-preview" [src]="reviewHtmlUrl()" scrolling="no" sandbox="allow-same-origin"></iframe>
+            <iframe class="html-preview" [src]="reviewHtmlUrl()" scrolling="no" sandbox="allow-same-origin" (load)="onReviewIframeLoad($event)"></iframe>
             <div
               class="box-overlay"
               [class.is-active]="boxMode()"
@@ -62,13 +144,18 @@
                 class="saved-box"
                 [class.saved-box--img]="b.tag === 'img'"
                 [class.saved-box--equation]="b.tag === 'equation'"
+                [class.saved-box--table]="b.tag === 'table'"
                 [class.saved-box--selected]="selectedBoxId() === b.id"
                 [style.left.px]="b.x"
                 [style.top.px]="b.y"
                 [style.width.px]="b.w"
                 [style.height.px]="b.h"
                 (mousedown)="boxMouseDown($event, b)">
-                <span class="saved-box__label">#{{ i + 1 }} {{ b.tag }}<ng-container *ngIf="b.tag === 'equation' && b.math?.status"> &middot; {{ b.math?.status }}</ng-container></span>
+                <span class="saved-box__label">
+                  <span>#{{ b.readingOrder ?? (i + 1) }} {{ b.tag }}<ng-container *ngIf="b.tag === 'equation' && b.math?.status"> &middot; {{ b.math?.status }}</ng-container></span>
+                  <button *ngIf="boxMode()" type="button" class="saved-box__order" title="Move earlier" [disabled]="i === 0" (mousedown)="$event.stopPropagation()" (click)="moveBoxOrder(b.id, -1)">↑</button>
+                  <button *ngIf="boxMode()" type="button" class="saved-box__order" title="Move later" [disabled]="i === boxes().length - 1" (mousedown)="$event.stopPropagation()" (click)="moveBoxOrder(b.id, 1)">↓</button>
+                </span>
                 <button *ngIf="boxMode()" type="button" class="saved-box__delete" title="Delete box" (mousedown)="$event.stopPropagation()" (click)="deleteBox(b.id)">&times;</button>
                 <button *ngIf="boxMode()" type="button" class="resize-handle resize-handle--nw" title="Resize" (mousedown)="resizeMouseDown($event, b, 'nw')"></button>
                 <button *ngIf="boxMode()" type="button" class="resize-handle resize-handle--ne" title="Resize" (mousedown)="resizeMouseDown($event, b, 'ne')"></button>

@@ -1,8 +1,11 @@
 import { readFile } from "node:fs/promises";
+import { destroyMuPdfObject } from "./mupdfLifecycle.js";
 
 type MuPdfModule = typeof import("mupdf");
 type MuPdfMatrix = import("mupdf").Matrix;
 type MuPdfRect = import("mupdf").Rect;
+type MuPdfDevice = import("mupdf").Device;
+type MuPdfPixmap = import("mupdf").Pixmap;
 
 async function importMuPdf(): Promise<MuPdfModule | null> {
   try {
@@ -21,12 +24,18 @@ function integerRect(rect: MuPdfRect): MuPdfRect {
   ];
 }
 
-function createNoTextDrawDevice(mupdf: MuPdfModule, matrix: MuPdfMatrix, pixmap: import("mupdf").Pixmap): import("mupdf").Device {
+function createNoTextDrawDevice(mupdf: MuPdfModule, matrix: MuPdfMatrix, pixmap: MuPdfPixmap): { device: MuPdfDevice; close: () => void; destroy: () => void } {
   const drawDevice = new mupdf.DrawDevice(matrix, pixmap) as any;
   let skippedTextClipDepth = 0;
+  let closed = false;
   const isSkippingTextClip = (): boolean => skippedTextClipDepth > 0;
-  return new mupdf.Device({
-    close: () => drawDevice.close(),
+  const close = (): void => {
+    if (closed) return;
+    closed = true;
+    drawDevice.close();
+  };
+  const device = new mupdf.Device({
+    close,
     fillPath: (...args) => { if (!isSkippingTextClip()) drawDevice.fillPath(...args); },
     strokePath: (...args) => { if (!isSkippingTextClip()) drawDevice.strokePath(...args); },
     clipPath: (...args) => { if (!isSkippingTextClip()) drawDevice.clipPath(...args); },
@@ -56,6 +65,15 @@ function createNoTextDrawDevice(mupdf: MuPdfModule, matrix: MuPdfMatrix, pixmap:
     beginLayer: (...args) => { if (!isSkippingTextClip()) drawDevice.beginLayer(...args); },
     endLayer: () => { if (!isSkippingTextClip()) drawDevice.endLayer(); }
   });
+  return {
+    device,
+    close,
+    destroy: () => {
+      close();
+      destroyMuPdfObject(device);
+      destroyMuPdfObject(drawDevice);
+    }
+  };
 }
 
 export async function renderPdfPagePng(filePath: string, pageIndex: number, dpi: number, options: { omitText?: boolean } = {}): Promise<Uint8Array> {
@@ -65,19 +83,38 @@ export async function renderPdfPagePng(filePath: string, pageIndex: number, dpi:
   }
   const pdfBytes = await readFile(filePath);
   const document = mupdf.Document.openDocument(pdfBytes, "application/pdf");
-  const page = document.loadPage(pageIndex);
-  const scale = Math.max(72, dpi) / 72;
-  const matrix = mupdf.Matrix.scale(scale, scale);
-  if (options.omitText) {
-    const bounds = page.getBounds();
-    const pixmapBounds = integerRect(mupdf.Rect.transform(bounds, matrix) as MuPdfRect);
-    const pixmap = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, pixmapBounds, false);
-    pixmap.clear(255);
-    const device = createNoTextDrawDevice(mupdf, matrix, pixmap);
-    page.run(device, mupdf.Matrix.identity);
-    device.close();
-    return pixmap.asPNG();
+  try {
+    const page = document.loadPage(pageIndex);
+    try {
+      const scale = Math.max(72, dpi) / 72;
+      const matrix = mupdf.Matrix.scale(scale, scale);
+      if (options.omitText) {
+        let pixmap: MuPdfPixmap | null = null;
+        let device: ReturnType<typeof createNoTextDrawDevice> | null = null;
+        try {
+          const bounds = page.getBounds();
+          const pixmapBounds = integerRect(mupdf.Rect.transform(bounds, matrix) as MuPdfRect);
+          pixmap = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, pixmapBounds, false);
+          pixmap.clear(255);
+          device = createNoTextDrawDevice(mupdf, matrix, pixmap);
+          page.run(device.device, mupdf.Matrix.identity);
+          device.close();
+          return new Uint8Array(pixmap.asPNG());
+        } finally {
+          device?.destroy();
+          destroyMuPdfObject(pixmap);
+        }
+      }
+      const pixmap = page.toPixmap(matrix, mupdf.ColorSpace.DeviceRGB, false, true);
+      try {
+        return new Uint8Array(pixmap.asPNG());
+      } finally {
+        destroyMuPdfObject(pixmap);
+      }
+    } finally {
+      destroyMuPdfObject(page);
+    }
+  } finally {
+    destroyMuPdfObject(document);
   }
-  const pixmap = page.toPixmap(matrix, mupdf.ColorSpace.DeviceRGB, false, true);
-  return pixmap.asPNG();
 }

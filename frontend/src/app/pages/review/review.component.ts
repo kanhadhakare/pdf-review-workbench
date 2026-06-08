@@ -1,19 +1,34 @@
 import { CommonModule } from "@angular/common";
 import { ChangeDetectionStrategy, Component, ElementRef, HostListener, computed, inject, signal, viewChild } from "@angular/core";
 import { ActivatedRoute, RouterLink } from "@angular/router";
-import { type JobEditSummary, type PageResult } from "../../types";
+import { type JobEditSummary, type PageResult, type SpanCorrectionScope } from "../../types";
 import { JobService } from "../../services/job.service";
 import { PageNavComponent } from "../../components/page-nav/page-nav.component";
 import { FormsModule } from "@angular/forms";
 import { DomSanitizer, type SafeResourceUrl } from "@angular/platform-browser";
 import { FixService } from "../../services/fix.service";
 import { type SemanticBox, type SemanticBoxTag } from "../../types";
+import { firstValueFrom } from "rxjs";
 
 type ResizeHandle = "nw" | "ne" | "sw" | "se";
 
 type BoxInteraction =
   | { type: "move"; boxId: string; startClientX: number; startClientY: number; original: SemanticBox }
   | { type: "resize"; boxId: string; handle: ResizeHandle; startClientX: number; startClientY: number; original: SemanticBox };
+
+type SelectedReviewSpan = {
+  pageIndex: number;
+  wordIndex: number;
+  cssClassName: string;
+  text: string;
+  fontFamily: string;
+  fontSizePx: number;
+  fontWeight: string;
+  fontStyle: string;
+  originalTopPx: number;
+  originalLeftPx: number;
+  originalLetterSpacingPx: number;
+};
 
 @Component({
   selector: "app-review-page",
@@ -49,12 +64,28 @@ export class ReviewComponent {
   readonly drawingBox = signal<{ startX: number; startY: number; x: number; y: number; w: number; h: number } | null>(null);
   readonly selectedBoxId = signal<string | null>(null);
   readonly boxInteraction = signal<BoxInteraction | null>(null);
+  readonly boxesDirty = signal(false);
   readonly savingBoxes = signal(false);
   readonly recognizingEquation = signal(false);
   readonly equationMessage = signal("");
+  readonly blockingMessage = signal("");
   readonly finalRefreshToken = signal(0);
+  readonly reviewRefreshToken = signal(0);
   readonly showFinalPane = signal(false);
   readonly showPageNav = signal(true);
+  readonly showStatsPopup = signal(false);
+  readonly showCorrectionPopup = signal(false);
+  readonly selectedReviewSpan = signal<SelectedReviewSpan | null>(null);
+  readonly correctionScope = signal<SpanCorrectionScope>("page-font-size");
+  readonly correctionClassName = signal("");
+  readonly correctionTopDelta = signal(0);
+  readonly correctionLeftDelta = signal(0);
+  readonly correctionLetterSpacing = signal(0);
+  readonly correctionMessage = signal("");
+  readonly savingCorrection = signal(false);
+  readonly correctionDrawerOffset = signal({ x: 0, y: 0 });
+  private selectedReviewElement: HTMLElement | null = null;
+  private correctionDrawerDrag: { startClientX: number; startClientY: number; startOffsetX: number; startOffsetY: number } | null = null;
   readonly selectedEquationBox = computed(() => {
     const selectedBoxId = this.selectedBoxId();
     return selectedBoxId ? this.boxes().find((box) => box.id === selectedBoxId && box.tag === "equation") ?? null : null;
@@ -64,7 +95,8 @@ export class ReviewComponent {
     const page = this.page();
     if (!page) return this.sanitizer.bypassSecurityTrustResourceUrl("about:blank");
     const pageNumber = page.pageIndex + 1;
-    return this.sanitizer.bypassSecurityTrustResourceUrl(`/storage/jobs/${this.jobId()}/review/page-${pageNumber}.html`);
+    const token = this.reviewRefreshToken();
+    return this.sanitizer.bypassSecurityTrustResourceUrl(`/storage/jobs/${this.jobId()}/review/page-${pageNumber}.html?v=${token}`);
   });
 
   readonly finalPreviewUrl = computed<SafeResourceUrl>(() => {
@@ -109,12 +141,16 @@ export class ReviewComponent {
     });
   }
 
-  selectPage(index: number): void { this.pageIndex.set(index); this.loadPage(index); }
-  previousPage(): void { if (this.pageIndex() > 0) this.selectPage(this.pageIndex() - 1); }
-  nextPage(): void { if (this.pageIndex() < this.pageCount() - 1) this.selectPage(this.pageIndex() + 1); }
+  selectPage(index: number): void { void this.navigateToPage(index); }
+  previousPage(): void { if (this.pageIndex() > 0) void this.navigateToPage(this.pageIndex() - 1); }
+  nextPage(): void { if (this.pageIndex() < this.pageCount() - 1) void this.navigateToPage(this.pageIndex() + 1); }
 
   @HostListener("window:keydown", ["$event"])
   onKeydown(event: KeyboardEvent): void {
+    if (this.blockingMessage()) {
+      event.preventDefault();
+      return;
+    }
     if (this.isEditableEventTarget(event.target)) return;
 
     const selectedBoxId = this.selectedBoxId();
@@ -146,6 +182,17 @@ export class ReviewComponent {
 
   @HostListener("window:mousemove", ["$event"])
   onWindowMouseMove(event: MouseEvent): void {
+    if (this.correctionDrawerDrag) {
+      event.preventDefault();
+      const dx = event.clientX - this.correctionDrawerDrag.startClientX;
+      const dy = event.clientY - this.correctionDrawerDrag.startClientY;
+      this.correctionDrawerOffset.set({
+        x: this.correctionDrawerDrag.startOffsetX + dx,
+        y: this.correctionDrawerDrag.startOffsetY + dy
+      });
+      return;
+    }
+
     const interaction = this.boxInteraction();
     if (!interaction) return;
     event.preventDefault();
@@ -163,6 +210,7 @@ export class ReviewComponent {
   onWindowMouseUp(): void {
     if (this.drawingBox()) this.finishDrawingBox();
     this.boxInteraction.set(null);
+    this.correctionDrawerDrag = null;
   }
 
   transform(): string { return `scale(${this.pageScale()})`; }
@@ -175,9 +223,101 @@ export class ReviewComponent {
 
   openFinalOutput(): void {
     const page = this.page();
-    if (!page) return;
+    if (!page || this.blockingMessage()) return;
     this.finalRefreshToken.update((value) => value + 1);
     window.open(`${this.finalPageUrl(page.pageIndex)}?v=${Date.now()}`, "_blank", "noopener,noreferrer");
+  }
+
+  onReviewIframeLoad(event: Event): void {
+    const iframe = event.target as HTMLIFrameElement;
+    const frameDocument = iframe.contentDocument;
+    const frameWindow = iframe.contentWindow;
+    if (!frameDocument || !frameWindow) return;
+    frameDocument.addEventListener("click", (clickEvent) => {
+      if (this.blockingMessage()) return;
+      const target = clickEvent.target as Element | null;
+      if (!target || typeof target.closest !== "function") return;
+      const wordElement = target.closest(".page__word");
+      if (!wordElement) return;
+      clickEvent.preventDefault();
+      clickEvent.stopPropagation();
+      this.selectReviewSpan(wordElement as unknown as HTMLElement, iframe);
+    });
+  }
+
+  applySpanCorrection(): void {
+    const span = this.selectedReviewSpan();
+    const page = this.page();
+    const className = this.normalizedCorrectionClassName();
+    if ((!span && !className) || !page || this.savingCorrection() || this.blockingMessage()) return;
+    const classMatch = className.match(/^page(\d+)__word(\d+)$/);
+    const targetPageIndex = span?.pageIndex ?? (classMatch ? Number(classMatch[1]) - 1 : page.pageIndex);
+    const targetWordIndex = span?.wordIndex ?? (classMatch ? Number(classMatch[2]) : -1);
+    this.savingCorrection.set(true);
+    this.correctionMessage.set("Applying span correction...");
+    this.fixes.saveSpanCorrection(this.jobId(), page.pageIndex, {
+      scope: className && !span ? "span" : this.correctionScope(),
+      pageIndex: targetPageIndex,
+      wordIndex: targetWordIndex,
+      cssClassName: className || span?.cssClassName,
+      fontFamily: span?.fontFamily ?? "",
+      fontSizePx: span?.fontSizePx ?? 0,
+      fontWeight: span?.fontWeight ?? "normal",
+      fontStyle: span?.fontStyle ?? "normal",
+      topDeltaPx: Number(this.correctionTopDelta()) || 0,
+      leftDeltaPx: Number(this.correctionLeftDelta()) || 0,
+      letterSpacingPx: Number(this.correctionLetterSpacing()) || 0
+    }).subscribe({
+      next: () => {
+        this.reviewRefreshToken.update((value) => value + 1);
+        this.finalRefreshToken.update((value) => value + 1);
+        this.correctionMessage.set("Correction applied.");
+        this.savingCorrection.set(false);
+        this.showCorrectionPopup.set(false);
+      },
+      error: (error) => {
+        this.correctionMessage.set(error?.error?.message ?? error?.message ?? "Unable to apply correction.");
+        this.savingCorrection.set(false);
+      }
+    });
+  }
+
+  updateCorrectionTopDelta(value: number): void {
+    this.correctionTopDelta.set(Number(value) || 0);
+    this.previewSelectedSpanCorrection();
+  }
+
+  updateCorrectionLeftDelta(value: number): void {
+    this.correctionLeftDelta.set(Number(value) || 0);
+    this.previewSelectedSpanCorrection();
+  }
+
+  updateCorrectionLetterSpacing(value: number): void {
+    this.correctionLetterSpacing.set(Number(value) || 0);
+    this.previewSelectedSpanCorrection();
+  }
+
+  openCorrectionPopup(): void {
+    if (!this.selectedReviewSpan()) this.resetCorrectionInputs();
+    this.showCorrectionPopup.set(true);
+  }
+
+  closeCorrectionPopup(): void {
+    if (this.savingCorrection()) return;
+    this.showCorrectionPopup.set(false);
+  }
+
+  startCorrectionDrawerDrag(event: MouseEvent): void {
+    if (this.savingCorrection()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const offset = this.correctionDrawerOffset();
+    this.correctionDrawerDrag = {
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startOffsetX: offset.x,
+      startOffsetY: offset.y
+    };
   }
 
   handleFixesSaved(summary: JobEditSummary): void {
@@ -188,6 +328,10 @@ export class ReviewComponent {
   private loadPage(index: number): void {
     this.loading.set(`Loading page ${index + 1}...`);
     this.selectedBoxId.set(null);
+    this.selectedReviewSpan.set(null);
+    this.correctionClassName.set("");
+    this.resetCorrectionInputs();
+    this.clearSelectedReviewElement();
     this.boxInteraction.set(null);
     this.drawingBox.set(null);
     this.equationMessage.set("");
@@ -201,8 +345,14 @@ export class ReviewComponent {
         this.confidenceMap.update((current) => ({ ...current, [page.pageIndex]: page.confidence }));
         this.loading.set("");
         this.fixes.getBoxes(this.jobId(), index).subscribe({
-          next: ({ boxes }) => this.boxes.set(Array.isArray(boxes) ? this.orderBoxes(boxes) : []),
-          error: () => this.boxes.set([])
+          next: ({ boxes }) => {
+            this.boxes.set(Array.isArray(boxes) ? this.normalizeBoxOrder(boxes) : []);
+            this.boxesDirty.set(false);
+          },
+          error: () => {
+            this.boxes.set([]);
+            this.boxesDirty.set(false);
+          }
         });
         queueMicrotask(() => this.updateScale());
       },
@@ -210,12 +360,22 @@ export class ReviewComponent {
     });
   }
 
+  private async navigateToPage(index: number): Promise<void> {
+    if (this.blockingMessage()) return;
+    const nextIndex = Math.max(0, Math.min(this.pageCount() - 1, index));
+    if (nextIndex === this.pageIndex()) return;
+    const saved = await this.saveCurrentBoxes("Saving page and reading equations before navigation...");
+    if (!saved) return;
+    this.pageIndex.set(nextIndex);
+    this.loadPage(nextIndex);
+  }
+
   private finalPageUrl(pageIndex: number): string {
     return `/storage/jobs/${this.jobId()}/final/page-${pageIndex + 1}.html`;
   }
 
   overlayMouseDown(event: MouseEvent): void {
-    if (!this.boxMode()) return;
+    if (!this.boxMode() || this.blockingMessage()) return;
     const page = this.page();
     if (!page) return;
     event.preventDefault();
@@ -263,7 +423,8 @@ export class ReviewComponent {
   }
 
   deleteBox(boxId: string): void {
-    this.boxes.update((existing) => existing.filter((box) => box.id !== boxId));
+    this.boxes.update((existing) => this.normalizeBoxOrder(existing.filter((box) => box.id !== boxId)));
+    this.boxesDirty.set(true);
     if (this.selectedBoxId() === boxId) this.selectedBoxId.set(null);
     const interaction = this.boxInteraction();
     if (interaction?.boxId === boxId) this.boxInteraction.set(null);
@@ -287,6 +448,7 @@ export class ReviewComponent {
         math: tag === "equation" ? box.math : undefined
       };
     }));
+    this.boxesDirty.set(true);
   }
 
   private finishDrawingBox(): void {
@@ -300,38 +462,31 @@ export class ReviewComponent {
       y: Number(current.y.toFixed(2)),
       w: Number(current.w.toFixed(2)),
       h: Number(current.h.toFixed(2)),
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      readingOrder: this.boxes().length + 1
     });
     if (box.w > 2 && box.h > 2) {
-      this.boxes.update((existing) => [...existing, box]);
+      this.boxes.update((existing) => this.normalizeBoxOrder([...existing, box]));
+      this.boxesDirty.set(true);
       this.selectedBoxId.set(box.id);
     }
     this.drawingBox.set(null);
   }
 
   saveBoxes(): void {
-    if (this.savingBoxes()) return;
-    const page = this.page();
-    if (!page) return;
-    this.savingBoxes.set(true);
-    this.fixes.saveBoxes(this.jobId(), page.pageIndex, this.boxes()).subscribe({
-      next: () => {
-        this.savingBoxes.set(false);
-        this.finalRefreshToken.update((value) => value + 1);
-      },
-      error: () => this.savingBoxes.set(false)
-    });
+    void this.saveCurrentBoxes("Saving boxes and reading equations...");
   }
 
   recognizeSelectedEquation(): void {
     const page = this.page();
     const box = this.selectedEquationBox();
-    if (!page || !box || this.recognizingEquation()) return;
+    if (!page || !box || this.recognizingEquation() || this.blockingMessage()) return;
     this.recognizingEquation.set(true);
     this.equationMessage.set("Reading equation...");
     this.fixes.recognizeEquation(this.jobId(), page.pageIndex, box.id, this.boxes()).subscribe({
       next: ({ box: updatedBox, result }) => {
-        this.boxes.update((existing) => this.orderBoxes(existing.map((candidate) => (candidate.id === updatedBox.id ? updatedBox : candidate))));
+        this.boxes.update((existing) => this.normalizeBoxOrder(existing.map((candidate) => (candidate.id === updatedBox.id ? updatedBox : candidate))));
+        this.boxesDirty.set(false);
         this.finalRefreshToken.update((value) => value + 1);
         this.equationMessage.set(
           result.status === "ok"
@@ -364,6 +519,65 @@ export class ReviewComponent {
     this.htmlScale.set(this.pageScale());
   }
 
+  private selectReviewSpan(wordElement: HTMLElement, iframe: HTMLIFrameElement): void {
+    const match = wordElement.className.toString().match(/page(\d+)__word(\d+)/);
+    if (!match) return;
+    this.clearSelectedReviewElement();
+    wordElement.style.outline = "2px solid #ffcc00";
+    wordElement.style.outlineOffset = "2px";
+    this.selectedReviewElement = wordElement;
+    const computedStyle = iframe.contentWindow?.getComputedStyle(wordElement);
+    const fontSizePx = Number.parseFloat(computedStyle?.fontSize ?? "0");
+    const topPx = Number.parseFloat(computedStyle?.top ?? wordElement.style.top ?? "0");
+    const leftPx = Number.parseFloat(computedStyle?.left ?? wordElement.style.left ?? "0");
+    const letterSpacingPx = computedStyle?.letterSpacing === "normal" ? 0 : Number.parseFloat(computedStyle?.letterSpacing ?? "0");
+    this.selectedReviewSpan.set({
+      pageIndex: Number(match[1]) - 1,
+      wordIndex: Number(match[2]),
+      cssClassName: `page${match[1]}__word${match[2]}`,
+      text: wordElement.textContent?.trim() ?? "",
+      fontFamily: computedStyle?.fontFamily ?? "",
+      fontSizePx: Number.isFinite(fontSizePx) ? Number(fontSizePx.toFixed(3)) : 0,
+      fontWeight: computedStyle?.fontWeight ?? "normal",
+      fontStyle: computedStyle?.fontStyle ?? "normal",
+      originalTopPx: Number.isFinite(topPx) ? topPx : 0,
+      originalLeftPx: Number.isFinite(leftPx) ? leftPx : 0,
+      originalLetterSpacingPx: Number.isFinite(letterSpacingPx) ? letterSpacingPx : 0
+    });
+    this.correctionClassName.set(`page${match[1]}__word${match[2]}`);
+    this.correctionTopDelta.set(0);
+    this.correctionLeftDelta.set(0);
+    this.correctionLetterSpacing.set(Number.isFinite(letterSpacingPx) ? Number(letterSpacingPx.toFixed(3)) : 0);
+    this.showCorrectionPopup.set(true);
+    this.correctionMessage.set("");
+  }
+
+  private normalizedCorrectionClassName(): string {
+    return this.correctionClassName().trim().replace(/^\./, "");
+  }
+
+  private resetCorrectionInputs(): void {
+    this.correctionTopDelta.set(0);
+    this.correctionLeftDelta.set(0);
+    this.correctionLetterSpacing.set(0);
+    this.correctionMessage.set("");
+  }
+
+  private clearSelectedReviewElement(): void {
+    if (!this.selectedReviewElement) return;
+    this.selectedReviewElement.style.outline = "";
+    this.selectedReviewElement.style.outlineOffset = "";
+    this.selectedReviewElement = null;
+  }
+
+  private previewSelectedSpanCorrection(): void {
+    const span = this.selectedReviewSpan();
+    if (!span || !this.selectedReviewElement) return;
+    this.selectedReviewElement.style.top = `${Number((span.originalTopPx + this.correctionTopDelta()).toFixed(3))}px`;
+    this.selectedReviewElement.style.left = `${Number((span.originalLeftPx + this.correctionLeftDelta()).toFixed(3))}px`;
+    this.selectedReviewElement.style.letterSpacing = `${Number(this.correctionLetterSpacing().toFixed(3))}px`;
+  }
+
   private moveSelectedBox(dx: number, dy: number): void {
     const selectedBoxId = this.selectedBoxId();
     if (!selectedBoxId) return;
@@ -374,6 +588,50 @@ export class ReviewComponent {
 
   private updateBox(boxId: string, nextBox: SemanticBox): void {
     this.boxes.update((existing) => existing.map((box) => (box.id === boxId ? nextBox : box)));
+    this.boxesDirty.set(true);
+  }
+
+  private async saveCurrentBoxes(message: string): Promise<boolean> {
+    if (this.savingBoxes() || this.blockingMessage()) return false;
+    const page = this.page();
+    if (!page) return false;
+    const orderedBoxes = this.normalizeBoxOrder(this.boxes());
+    if (!orderedBoxes.length && !this.boxesDirty()) return true;
+    this.boxes.set(orderedBoxes);
+    this.savingBoxes.set(true);
+    this.blockingMessage.set(message);
+    this.equationMessage.set("Saving page...");
+    try {
+      const response = await firstValueFrom(this.fixes.saveBoxes(this.jobId(), page.pageIndex, orderedBoxes, true));
+      this.boxes.set(this.normalizeBoxOrder(response.boxes ?? orderedBoxes));
+      this.boxesDirty.set(false);
+      this.finalRefreshToken.update((value) => value + 1);
+      const equationCount = (response.boxes ?? orderedBoxes).filter((box) => box.tag === "equation").length;
+      this.equationMessage.set(equationCount > 0 ? `Saved page. Equation boxes processed: ${equationCount}.` : "Saved page.");
+      return true;
+    } catch (error: any) {
+      const errorMessage = error?.error?.message ?? error?.message ?? "Unable to save page.";
+      this.equationMessage.set(errorMessage);
+      return false;
+    } finally {
+      this.savingBoxes.set(false);
+      this.blockingMessage.set("");
+    }
+  }
+
+  moveBoxOrder(boxId: string, delta: -1 | 1): void {
+    this.boxes.update((existing) => {
+      const ordered = this.normalizeBoxOrder(existing);
+      const index = ordered.findIndex((box) => box.id === boxId);
+      if (index < 0) return ordered;
+      const nextIndex = Math.max(0, Math.min(ordered.length - 1, index + delta));
+      if (nextIndex === index) return ordered;
+      const next = [...ordered];
+      const [box] = next.splice(index, 1);
+      next.splice(nextIndex, 0, box);
+      this.boxesDirty.set(true);
+      return this.normalizeBoxOrder(next);
+    });
   }
 
   private resizeBox(box: SemanticBox, handle: ResizeHandle, dx: number, dy: number): SemanticBox {
@@ -433,6 +691,15 @@ export class ReviewComponent {
   }
 
   private orderBoxes(boxes: SemanticBox[]): SemanticBox[] {
-    return [...boxes].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+    return [...boxes].sort((a, b) => {
+      const aOrder = typeof a.readingOrder === "number" && Number.isFinite(a.readingOrder) ? a.readingOrder : Number.POSITIVE_INFINITY;
+      const bOrder = typeof b.readingOrder === "number" && Number.isFinite(b.readingOrder) ? b.readingOrder : Number.POSITIVE_INFINITY;
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      return Date.parse(a.createdAt) - Date.parse(b.createdAt);
+    });
+  }
+
+  private normalizeBoxOrder(boxes: SemanticBox[]): SemanticBox[] {
+    return this.orderBoxes(boxes).map((box, index) => ({ ...box, readingOrder: index + 1 }));
   }
 }

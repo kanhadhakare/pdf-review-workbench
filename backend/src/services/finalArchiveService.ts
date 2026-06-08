@@ -13,8 +13,8 @@ async function walkFiles(dirPath: string): Promise<string[]> {
   return nested.flat();
 }
 
-async function createFinalPageImage(jobId: string, pageNumber: number, fallbackImagePath: string): Promise<Buffer> {
-  return renderFinalBackgroundPng(jobId, pageNumber - 1, fallbackImagePath);
+async function createFinalPageImage(jobId: string, pageNumber: number): Promise<Buffer> {
+  return renderFinalBackgroundPng(jobId, pageNumber - 1);
 }
 
 function archiveFileName(originalFileName: string): string {
@@ -36,7 +36,7 @@ export async function buildFinalArchive(jobId: string): Promise<{ fileName: stri
     const relativePath = path.relative(finalDir, filePath).replace(/\\/g, "/");
     const pageImageMatch = relativePath.match(/^images\/page-(\d+)\.png$/);
     const data = pageImageMatch
-      ? await createFinalPageImage(jobId, Number(pageImageMatch[1]), filePath)
+      ? await createFinalPageImage(jobId, Number(pageImageMatch[1]))
       : await readFile(filePath);
     return { name: relativePath, data };
   }));

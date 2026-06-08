@@ -81,8 +81,9 @@ function tagOrder(tag: SemanticTag): number {
     case "h3": return 3;
     case "p": return 4;
     case "caption": return 5;
-    case "span": return 6;
-    default: return 7;
+    case "table": return 6;
+    case "span": return 7;
+    default: return 8;
   }
 }
 

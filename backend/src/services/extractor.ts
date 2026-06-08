@@ -1,6 +1,5 @@
 ﻿import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import pLimit from "p-limit";
 import { ExtractionStatus, type ClassifierResult, type ExtractedFontAsset, type ExtractionProfile, type FontExtractionManifest, type PageResult, type RawSpan, type SemanticTag, type TextBlock } from "../types.js";
 import { classifyBlocks } from "./classifier.js";
 import { jobStore, type StoredJobState } from "./jobStore.js";
@@ -8,8 +7,9 @@ import { extractFontsWithPdfBox } from "./pdfboxFontService.js";
 import { convertManifestFontsForWeb } from "./fontConversionService.js";
 import { validatePage } from "./validator.js";
 import { isPdf2HtmlExEnabled, runPdf2HtmlEx, validatePdf2HtmlExOutput } from "./pdf2htmlExService.js";
-import { extractionMaxDpi, extractionPageConcurrency } from "../config/runtime.js";
+import { extractionMaxDpi } from "../config/runtime.js";
 import { normalizePdfText } from "./textNormalizer.js";
+import { destroyMuPdfObject } from "./mupdfLifecycle.js";
 
 type MuPdfModule = typeof import("mupdf");
 type MuPdfPdfDocument = import("mupdf").PDFDocument;
@@ -661,73 +661,84 @@ async function extractWithMuPdf(filePath: string, profile: ExtractionProfile, dp
   activeEngine = "mupdf";
   const pdfBytes = await readFile(filePath);
   const document = mupdf.Document.openDocument(pdfBytes, "application/pdf");
-  const pageCount = document.countPages();
-  const safeDpi = Math.min(extractionMaxDpi, Math.max(72, dpi));
-  const scale = Math.min(200, safeDpi) / 72;
-  const matrix = mupdf.Matrix.scale(scale, scale);
-  const limit = pLimit(extractionPageConcurrency);
-  return Promise.all(Array.from({ length: pageCount }, (_, pageIndex) => limit(async () => {
-    const page = document.loadPage(pageIndex);
-    const bounds = page.getBounds() as [number, number, number, number];
-    const pageWidth = Math.round((bounds[2] - bounds[0]) * scale);
-    const pageHeight = Math.round((bounds[3] - bounds[1]) * scale);
-    const pixmap = page.toPixmap(matrix, mupdf.ColorSpace.DeviceRGB, false, true);
-    const imageBytes = pixmap.asPNG();
-    const structured = page.toStructuredText("preserve-whitespace,preserve-spans");
-    const html = structured.asHTML(0);
-    const htmlRuns = parseHtmlSpanRuns(html);
-    const rotationHints = collectRotationHints(structured);
-    const reviewWords = collectReviewWords(structured, profile, scale);
-    let runIndex = 0;
-    const json = JSON.parse(structured.asJSON(1)) as StructuredPageJson;
-    const spans: ExtractorSpan[] = [];
-    for (const block of json.blocks ?? []) {
-      if (block.type !== "text") continue;
-      for (const line of block.lines ?? []) {
-        const bbox = line.bbox ?? block.bbox;
-        const text = normalizeText(line.text ?? "", profile);
-        if (!bbox || !text) continue;
-        const fontName = line.font?.name ?? "Unknown";
-        let rawColor: string | null = null;
-        let bestFallback: { color: string | null; score: number } | null = null;
-        for (let attempts = 0; attempts < 12 && runIndex < htmlRuns.length; attempts += 1) {
-          const run = htmlRuns[runIndex++];
-          const runText = normalizeText(run.text ?? "", profile);
-          if (!runText) continue;
-          if (runText === text) {
-            rawColor = run.color;
-            bestFallback = null;
-            break;
-          }
-          // Heuristic fallback: sometimes MuPDF JSON "line.text" merges multiple HTML spans (or vice versa).
-          // If texts overlap and positions are close, treat the run's color as a candidate.
-          const overlap = text.includes(runText) || runText.includes(text);
-          if (overlap && run.x !== null && run.y !== null) {
-            const dx = Math.abs(run.x - bbox.x);
-            const dy = Math.abs(run.y - bbox.y);
-            const score = dx + (dy * 2);
-            if (!bestFallback || score < bestFallback.score) bestFallback = { color: run.color, score };
+  try {
+    const pageCount = document.countPages();
+    const safeDpi = Math.min(extractionMaxDpi, Math.max(72, dpi));
+    const scale = Math.min(200, safeDpi) / 72;
+    const matrix = mupdf.Matrix.scale(scale, scale);
+    const pages: PageExtraction[] = [];
+    for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+      const page = document.loadPage(pageIndex);
+      let pixmap: import("mupdf").Pixmap | null = null;
+      let structured: import("mupdf").StructuredText | null = null;
+      try {
+        const bounds = page.getBounds() as [number, number, number, number];
+        const pageWidth = Math.round((bounds[2] - bounds[0]) * scale);
+        const pageHeight = Math.round((bounds[3] - bounds[1]) * scale);
+        pixmap = page.toPixmap(matrix, mupdf.ColorSpace.DeviceRGB, false, true);
+        const imageBytes = new Uint8Array(pixmap.asPNG());
+        structured = page.toStructuredText("preserve-whitespace,preserve-spans");
+        const html = structured.asHTML(0);
+        const htmlRuns = parseHtmlSpanRuns(html);
+        const rotationHints = collectRotationHints(structured);
+        const reviewWords = collectReviewWords(structured, profile, scale);
+        let runIndex = 0;
+        const json = JSON.parse(structured.asJSON(1)) as StructuredPageJson;
+        const spans: ExtractorSpan[] = [];
+        for (const block of json.blocks ?? []) {
+          if (block.type !== "text") continue;
+          for (const line of block.lines ?? []) {
+            const bbox = line.bbox ?? block.bbox;
+            const text = normalizeText(line.text ?? "", profile);
+            if (!bbox || !text) continue;
+            const fontName = line.font?.name ?? "Unknown";
+            let rawColor: string | null = null;
+            let bestFallback: { color: string | null; score: number } | null = null;
+            for (let attempts = 0; attempts < 12 && runIndex < htmlRuns.length; attempts += 1) {
+              const run = htmlRuns[runIndex++];
+              const runText = normalizeText(run.text ?? "", profile);
+              if (!runText) continue;
+              if (runText === text) {
+                rawColor = run.color;
+                bestFallback = null;
+                break;
+              }
+              const overlap = text.includes(runText) || runText.includes(text);
+              if (overlap && run.x !== null && run.y !== null) {
+                const dx = Math.abs(run.x - bbox.x);
+                const dy = Math.abs(run.y - bbox.y);
+                const score = dx + (dy * 2);
+                if (!bestFallback || score < bestFallback.score) bestFallback = { color: run.color, score };
+              }
+            }
+            if (rawColor === null && bestFallback) rawColor = bestFallback.color;
+            const rotation = findLineRotation(rotationHints, line.text ?? "", line.x, line.y);
+            spans.push({
+              x: (bbox.x * scale) + profile.coordOffsetX,
+              y: (bbox.y * scale) + profile.coordOffsetY,
+              w: bbox.w * scale,
+              h: bbox.h * scale,
+              text,
+              fontSize: line.font?.size ?? bbox.h ?? 12,
+              fontName,
+              fontColor: sanitizeColor(rawColor ?? "#000000"),
+              rotation,
+              pageIndex,
+              fontWeight: /bold|black|heavy/i.test(fontName) ? "bold" : "normal"
+            });
           }
         }
-        if (rawColor === null && bestFallback) rawColor = bestFallback.color;
-        const rotation = findLineRotation(rotationHints, line.text ?? "", line.x, line.y);
-        spans.push({
-          x: (bbox.x * scale) + profile.coordOffsetX,
-          y: (bbox.y * scale) + profile.coordOffsetY,
-          w: bbox.w * scale,
-          h: bbox.h * scale,
-          text,
-          fontSize: line.font?.size ?? bbox.h ?? 12,
-          fontName,
-          fontColor: sanitizeColor(rawColor ?? "#000000"),
-          rotation,
-          pageIndex,
-          fontWeight: /bold|black|heavy/i.test(fontName) ? "bold" : "normal"
-        });
+        pages.push({ pageIndex, pageWidth, pageHeight, scale, leftMarginPx: detectLeftMarginPx(spans), spans, reviewWords, imageBytes });
+      } finally {
+        destroyMuPdfObject(structured);
+        destroyMuPdfObject(pixmap);
+        destroyMuPdfObject(page);
       }
     }
-    return { pageIndex, pageWidth, pageHeight, scale, leftMarginPx: detectLeftMarginPx(spans), spans, reviewWords, imageBytes };
-  })));
+    return pages;
+  } finally {
+    destroyMuPdfObject(document);
+  }
 }
 
 async function extractFontsFromMuPdf(filePath: string, jobId: string): Promise<ExtractedFontAsset[]> {
@@ -735,74 +746,82 @@ async function extractFontsFromMuPdf(filePath: string, jobId: string): Promise<E
   if (!mupdf) return [];
   const pdfBytes = await readFile(filePath);
   const document = mupdf.Document.openDocument(pdfBytes, "application/pdf");
-  const pdfDocument = document.asPDF();
-  if (!pdfDocument) {
-    return [];
-  }
-  const fontAssets: ExtractedFontAsset[] = [];
-  const seen = new Map<string, ExtractedFontAsset>();
-  const candidates: Array<{ fontRef: string; family: string; fontWeight: "normal" | "bold"; fontStyle: "normal" | "italic"; fontStream: MuPdfPdfObject; }> = [];
-  for (let pageIndex = 0; pageIndex < pdfDocument.countPages(); pageIndex++) {
-    const page = pdfDocument.loadPage(pageIndex) as MuPdfPdfPage;
-    const pageObj = page.getObject();
-    const resources = pageObj.get("Resources");
-    if (!resources?.isDictionary?.()) continue;
-    const fontResources = resources.get("Font");
-    if (!fontResources?.isDictionary?.()) continue;
-    fontResources.forEach((valueObj: MuPdfPdfObject, keyName: string | number) => {
+  try {
+    const pdfDocument = document.asPDF();
+    if (!pdfDocument) {
+      return [];
+    }
+    const fontAssets: ExtractedFontAsset[] = [];
+    const seen = new Map<string, ExtractedFontAsset>();
+    const candidates: Array<{ fontRef: string; family: string; fontWeight: "normal" | "bold"; fontStyle: "normal" | "italic"; bytes: Uint8Array; extension: string; }> = [];
+    for (let pageIndex = 0; pageIndex < pdfDocument.countPages(); pageIndex++) {
+      const page = pdfDocument.loadPage(pageIndex) as MuPdfPdfPage;
       try {
-        const fontRef = valueObj.toString?.() ?? String(keyName);
-        if (seen.has(fontRef)) return;
-        const font = valueObj.isDictionary?.() ? valueObj : valueObj.resolve?.();
-        if (!font?.isDictionary?.()) return;
-        const baseFont = font.get("BaseFont")?.asName?.() ?? font.get("FontName")?.asName?.() ?? String(keyName);
-        const cleanedName = cleanPdfFontName(baseFont);
-        const descriptorObject = font.get("FontDescriptor");
-        const fontDescriptor = descriptorObject?.isDictionary?.() ? descriptorObject : descriptorObject?.resolve?.();
-        if (!fontDescriptor?.isDictionary?.()) return;
-        const fontFileObject = fontDescriptor.get("FontFile2") ?? fontDescriptor.get("FontFile3") ?? fontDescriptor.get("FontFile");
-        if (!fontFileObject) return;
-        const fontStream = fontFileObject.isStream?.() ? fontFileObject : fontFileObject.resolve?.();
-        if (!fontStream?.isStream?.()) return;
-        candidates.push({
-          fontRef,
-          family: cleanedName,
-          fontWeight: /bold|black|heavy/i.test(baseFont) ? "bold" : "normal",
-          fontStyle: /italic|oblique/i.test(baseFont) ? "italic" : "normal",
-          fontStream
+        const pageObj = page.getObject();
+        const resources = pageObj.get("Resources");
+        if (!resources?.isDictionary?.()) continue;
+        const fontResources = resources.get("Font");
+        if (!fontResources?.isDictionary?.()) continue;
+        fontResources.forEach((valueObj: MuPdfPdfObject, keyName: string | number) => {
+          try {
+            const fontRef = valueObj.toString?.() ?? String(keyName);
+            if (seen.has(fontRef) || candidates.some((candidate) => candidate.fontRef === fontRef)) return;
+            const font = valueObj.isDictionary?.() ? valueObj : valueObj.resolve?.();
+            if (!font?.isDictionary?.()) return;
+            const baseFont = font.get("BaseFont")?.asName?.() ?? font.get("FontName")?.asName?.() ?? String(keyName);
+            const cleanedName = cleanPdfFontName(baseFont);
+            const descriptorObject = font.get("FontDescriptor");
+            const fontDescriptor = descriptorObject?.isDictionary?.() ? descriptorObject : descriptorObject?.resolve?.();
+            if (!fontDescriptor?.isDictionary?.()) return;
+            const fontFileObject = fontDescriptor.get("FontFile2") ?? fontDescriptor.get("FontFile3") ?? fontDescriptor.get("FontFile");
+            if (!fontFileObject) return;
+            const fontStream = fontFileObject.isStream?.() ? fontFileObject : fontFileObject.resolve?.();
+            if (!fontStream?.isStream?.()) return;
+            const rawBytes = fontStream.readRawStream?.() ?? fontStream.readStream?.();
+            if (!rawBytes) return;
+            const bytes = rawBytes instanceof Uint8Array
+              ? new Uint8Array(rawBytes)
+              : rawBytes instanceof ArrayBuffer
+                ? new Uint8Array(rawBytes)
+                : new Uint8Array(rawBytes as unknown as Uint8Array);
+            candidates.push({
+              fontRef,
+              family: cleanedName,
+              fontWeight: /bold|black|heavy/i.test(baseFont) ? "bold" : "normal",
+              fontStyle: /italic|oblique/i.test(baseFont) ? "italic" : "normal",
+              bytes,
+              extension: getFontStreamExtension(fontStream)
+            });
+          } catch (error) {
+            console.warn(`[extractor] skipping font resource ${String(keyName)} on page ${pageIndex + 1}:`, error);
+          }
         });
-      } catch (error) {
-        console.warn(`[extractor] skipping font resource ${String(keyName)} on page ${pageIndex + 1}:`, error);
+      } finally {
+        destroyMuPdfObject(page);
       }
-    });
+    }
+    for (const candidate of candidates) {
+      const fileName = `${sanitizeFontFamily(candidate.family).replace(/\s+/g, "-").toLowerCase()}-${createHash("sha256").update(candidate.bytes).digest("hex").slice(0, 8)}.${candidate.extension}`;
+      if (seen.has(fileName)) continue;
+      await jobStore.saveFontFile(jobId, fileName, candidate.bytes);
+      const asset: ExtractedFontAsset = {
+        resourceName: candidate.fontRef,
+        baseFont: candidate.family,
+        family: candidate.family,
+        format: getFontFileFormat(candidate.extension),
+        fileName,
+        fontWeight: candidate.fontWeight,
+        fontStyle: candidate.fontStyle,
+        pages: []
+      };
+      seen.set(candidate.fontRef, asset);
+      seen.set(fileName, asset);
+      fontAssets.push(asset);
+    }
+    return fontAssets;
+  } finally {
+    destroyMuPdfObject(document);
   }
-  for (const candidate of candidates) {
-    const rawBytes = candidate.fontStream.readRawStream?.() ?? candidate.fontStream.readStream?.();
-    if (!rawBytes) continue;
-    const bytes = rawBytes instanceof Uint8Array
-      ? rawBytes
-      : rawBytes instanceof ArrayBuffer
-        ? new Uint8Array(rawBytes)
-        : new Uint8Array(rawBytes as unknown as Uint8Array);
-    const extension = getFontStreamExtension(candidate.fontStream);
-    const fileName = `${sanitizeFontFamily(candidate.family).replace(/\s+/g, "-").toLowerCase()}-${createHash("sha256").update(bytes).digest("hex").slice(0, 8)}.${extension}`;
-    if (seen.has(fileName)) continue;
-    await jobStore.saveFontFile(jobId, fileName, bytes);
-    const asset: ExtractedFontAsset = {
-      resourceName: candidate.fontRef,
-      baseFont: candidate.family,
-      family: candidate.family,
-      format: getFontFileFormat(extension),
-      fileName,
-      fontWeight: candidate.fontWeight,
-      fontStyle: candidate.fontStyle,
-      pages: []
-    };
-    seen.set(candidate.fontRef, asset);
-    seen.set(fileName, asset);
-    fontAssets.push(asset);
-  }
-  return fontAssets;
 }
 
 interface PageExtractionResult {
