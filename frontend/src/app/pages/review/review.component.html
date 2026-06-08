@@ -39,7 +39,7 @@
         <option value="h2">h2</option>
         <option value="h3">h3</option>
         <option value="caption">caption</option>
-        <option value="table">table</option>
+        <option value="table">table crop</option>
         <option value="img">img crop</option>
         <option value="equation">equation</option>
       </select>
@@ -47,6 +47,19 @@
       <button type="button" (click)="recognizeSelectedEquation()" [disabled]="!boxMode() || !selectedEquationBox() || recognizingEquation() || !!blockingMessage()">{{ recognizingEquation() ? 'Reading math...' : 'Read Equation' }}</button>
       <button type="button" (click)="openFinalOutput()" [disabled]="!page() || !!blockingMessage()">Open Final</button>
       <button type="button" (click)="deleteSelectedBox()" [disabled]="!boxMode() || !selectedBoxId() || !!blockingMessage()">Delete Box</button>
+      <ng-container *ngIf="boxMode()">
+        <span class="toolbar-hint">Table:</span>
+        <select
+          [ngModel]="selectedTableMode()"
+          (ngModelChange)="setSelectedTableMode($any($event))"
+          [disabled]="!selectedTableBox() || !!blockingMessage()"
+          title="Select a table crop box to enable semantic grid">
+          <option value="crop">table as crop</option>
+          <option value="semantic">semantic grid</option>
+        </select>
+        <button type="button" (click)="addTableColumn()" [disabled]="!selectedTableBox() || selectedTableMode() !== 'semantic' || !!blockingMessage()">Add column</button>
+        <button type="button" (click)="addTableRow()" [disabled]="!selectedTableBox() || selectedTableMode() !== 'semantic' || !!blockingMessage()">Add row</button>
+      </ng-container>
       <button type="button" (click)="previousPage()" [disabled]="pageIndex() === 0 || !!blockingMessage()">Previous</button>
       <button type="button" (click)="nextPage()" [disabled]="pageIndex() >= pageCount() - 1 || !!blockingMessage()">Next</button>
       <span class="equation-status" *ngIf="equationMessage()">{{ equationMessage() }}</span>
@@ -151,6 +164,24 @@
                 [style.width.px]="b.w"
                 [style.height.px]="b.h"
                 (mousedown)="boxMouseDown($event, b)">
+                <ng-container *ngIf="b.tag === 'table' && (b.table?.outputMode ?? 'crop') === 'semantic' && b.table?.grid">
+                  <button
+                    *ngFor="let column of tableGridColumns(b); let columnIndex = index"
+                    type="button"
+                    class="table-grid-line table-grid-line--column"
+                    [style.left.px]="column"
+                    title="Drag table column"
+                    (mousedown)="tableGridMouseDown($event, b, 'column', columnIndex)">
+                  </button>
+                  <button
+                    *ngFor="let row of tableGridRows(b); let rowIndex = index"
+                    type="button"
+                    class="table-grid-line table-grid-line--row"
+                    [style.top.px]="row"
+                    title="Drag table row"
+                    (mousedown)="tableGridMouseDown($event, b, 'row', rowIndex)">
+                  </button>
+                </ng-container>
                 <span class="saved-box__label">
                   <span>#{{ b.readingOrder ?? (i + 1) }} {{ b.tag }}<ng-container *ngIf="b.tag === 'equation' && b.math?.status"> &middot; {{ b.math?.status }}</ng-container></span>
                   <button *ngIf="boxMode()" type="button" class="saved-box__order" title="Move earlier" [disabled]="i === 0" (mousedown)="$event.stopPropagation()" (click)="moveBoxOrder(b.id, -1)">↑</button>

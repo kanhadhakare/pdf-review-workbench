@@ -26,6 +26,22 @@ export interface RawSpan {
   rotation?: number;
 }
 
+export interface SemanticTableGrid {
+  columns: number[];
+  rows: number[];
+  mergedCells?: Array<{
+    row: number;
+    column: number;
+    rowSpan: number;
+    colSpan: number;
+  }>;
+}
+
+export interface SemanticTableModel {
+  outputMode?: "crop" | "semantic";
+  grid?: SemanticTableGrid;
+}
+
 export interface SemanticChildSpan {
   id: string;
   text: string;

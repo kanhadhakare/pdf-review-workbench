@@ -1,6 +1,6 @@
 import { CommonModule } from "@angular/common";
 import { ChangeDetectionStrategy, Component, ElementRef, HostListener, computed, inject, signal, viewChild } from "@angular/core";
-import { ActivatedRoute, RouterLink } from "@angular/router";
+import { ActivatedRoute, Router, RouterLink } from "@angular/router";
 import { type JobEditSummary, type PageResult, type SpanCorrectionScope } from "../../types";
 import { JobService } from "../../services/job.service";
 import { PageNavComponent } from "../../components/page-nav/page-nav.component";
@@ -14,7 +14,8 @@ type ResizeHandle = "nw" | "ne" | "sw" | "se";
 
 type BoxInteraction =
   | { type: "move"; boxId: string; startClientX: number; startClientY: number; original: SemanticBox }
-  | { type: "resize"; boxId: string; handle: ResizeHandle; startClientX: number; startClientY: number; original: SemanticBox };
+  | { type: "resize"; boxId: string; handle: ResizeHandle; startClientX: number; startClientY: number; original: SemanticBox }
+  | { type: "table-grid"; boxId: string; axis: "column" | "row"; lineIndex: number; startClientX: number; startClientY: number; original: SemanticBox };
 
 type SelectedReviewSpan = {
   pageIndex: number;
@@ -40,6 +41,7 @@ type SelectedReviewSpan = {
 })
 export class ReviewComponent {
   private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
   private readonly jobs = inject(JobService);
   private readonly fixes = inject(FixService);
   private readonly sanitizer = inject(DomSanitizer);
@@ -90,6 +92,11 @@ export class ReviewComponent {
     const selectedBoxId = this.selectedBoxId();
     return selectedBoxId ? this.boxes().find((box) => box.id === selectedBoxId && box.tag === "equation") ?? null : null;
   });
+  readonly selectedTableBox = computed(() => {
+    const selectedBoxId = this.selectedBoxId();
+    return selectedBoxId ? this.boxes().find((box) => box.id === selectedBoxId && box.tag === "table") ?? null : null;
+  });
+  readonly selectedTableMode = computed<"crop" | "semantic">(() => this.selectedTableBox()?.table?.outputMode ?? "crop");
 
   readonly reviewHtmlUrl = computed<SafeResourceUrl>(() => {
     const page = this.page();
@@ -118,8 +125,9 @@ export class ReviewComponent {
             this.editSummary.set(editSummary);
             this.editCountMap.set({ ...editSummary.editsByPage });
             const resumeIndex = resume.lastVisitedPageIndex ?? (resume.draftPageIndices?.[resume.draftPageIndices.length - 1] ?? 0);
-            const nextIndex = Math.max(0, Math.min(job.pageCount - 1, resumeIndex));
+            const nextIndex = this.initialPageIndex(job.pageCount, resumeIndex);
             this.pageIndex.set(nextIndex);
+            this.replacePageQueryParam(nextIndex);
             this.loadPage(nextIndex);
           },
           error: () => this.loading.set("Unable to load review session.")
@@ -133,7 +141,10 @@ export class ReviewComponent {
             this.pageCount.set(job.pageCount);
             this.editSummary.set(editSummary);
             this.editCountMap.set({ ...editSummary.editsByPage });
-            this.loadPage(0);
+            const nextIndex = this.initialPageIndex(job.pageCount, 0);
+            this.pageIndex.set(nextIndex);
+            this.replacePageQueryParam(nextIndex);
+            this.loadPage(nextIndex);
           },
           error: () => this.loading.set("Unable to load review session.")
         });
@@ -202,7 +213,9 @@ export class ReviewComponent {
     const nextBox =
       interaction.type === "move"
         ? this.clampBox({ ...interaction.original, x: interaction.original.x + dx, y: interaction.original.y + dy })
-        : this.resizeBox(interaction.original, interaction.handle, dx, dy);
+        : interaction.type === "resize"
+          ? this.resizeBox(interaction.original, interaction.handle, dx, dy)
+          : this.moveTableGridLine(interaction.original, interaction.axis, interaction.lineIndex, dx, dy);
     this.updateBox(interaction.boxId, nextBox);
   }
 
@@ -367,7 +380,23 @@ export class ReviewComponent {
     const saved = await this.saveCurrentBoxes("Saving page and reading equations before navigation...");
     if (!saved) return;
     this.pageIndex.set(nextIndex);
+    this.replacePageQueryParam(nextIndex);
     this.loadPage(nextIndex);
+  }
+
+  private initialPageIndex(pageCount: number, fallbackIndex: number): number {
+    const pageParam = Number(this.route.snapshot.queryParamMap.get("page"));
+    const requestedIndex = Number.isFinite(pageParam) && pageParam > 0 ? Math.floor(pageParam) - 1 : fallbackIndex;
+    return Math.max(0, Math.min(Math.max(0, pageCount - 1), requestedIndex));
+  }
+
+  private replacePageQueryParam(index: number): void {
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { page: index + 1 },
+      queryParamsHandling: "merge",
+      replaceUrl: true
+    });
   }
 
   private finalPageUrl(pageIndex: number): string {
@@ -422,6 +451,14 @@ export class ReviewComponent {
     this.boxInteraction.set({ type: "resize", boxId: box.id, handle, startClientX: event.clientX, startClientY: event.clientY, original: { ...box } });
   }
 
+  tableGridMouseDown(event: MouseEvent, box: SemanticBox, axis: "column" | "row", lineIndex: number): void {
+    if (!this.boxMode() || box.tag !== "table") return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.selectedBoxId.set(box.id);
+    this.boxInteraction.set({ type: "table-grid", boxId: box.id, axis, lineIndex, startClientX: event.clientX, startClientY: event.clientY, original: { ...box } });
+  }
+
   deleteBox(boxId: string): void {
     this.boxes.update((existing) => this.normalizeBoxOrder(existing.filter((box) => box.id !== boxId)));
     this.boxesDirty.set(true);
@@ -445,10 +482,60 @@ export class ReviewComponent {
       return {
         ...box,
         tag,
-        math: tag === "equation" ? box.math : undefined
+        math: tag === "equation" ? box.math : undefined,
+        table: tag === "table" ? box.table ?? { outputMode: "crop" } : undefined
       };
     }));
     this.boxesDirty.set(true);
+  }
+
+  setSelectedTableMode(mode: "crop" | "semantic"): void {
+    const box = this.selectedTableBox();
+    if (!box) return;
+    this.updateBox(box.id, {
+      ...box,
+      table: mode === "semantic" ? this.ensureTableGrid(box) : { outputMode: "crop" }
+    });
+  }
+
+  addTableColumn(): void {
+    const box = this.selectedTableBox();
+    if (!box) return;
+    const table = this.ensureTableGrid(box);
+    const columns = [...(table.grid?.columns ?? [])];
+    const next = Number((box.w / (columns.length + 2)).toFixed(2));
+    columns.push(next);
+    this.updateBox(box.id, {
+      ...box,
+      table: {
+        outputMode: "semantic",
+        grid: { ...table.grid!, columns: this.normalizeGridValues(columns, box.w) }
+      }
+    });
+  }
+
+  addTableRow(): void {
+    const box = this.selectedTableBox();
+    if (!box) return;
+    const table = this.ensureTableGrid(box);
+    const rows = [...(table.grid?.rows ?? [])];
+    const next = Number((box.h / (rows.length + 2)).toFixed(2));
+    rows.push(next);
+    this.updateBox(box.id, {
+      ...box,
+      table: {
+        outputMode: "semantic",
+        grid: { ...table.grid!, rows: this.normalizeGridValues(rows, box.h) }
+      }
+    });
+  }
+
+  tableGridColumns(box: SemanticBox): number[] {
+    return box.tag === "table" ? box.table?.grid?.columns ?? [] : [];
+  }
+
+  tableGridRows(box: SemanticBox): number[] {
+    return box.tag === "table" ? box.table?.grid?.rows ?? [] : [];
   }
 
   private finishDrawingBox(): void {
@@ -463,7 +550,8 @@ export class ReviewComponent {
       w: Number(current.w.toFixed(2)),
       h: Number(current.h.toFixed(2)),
       createdAt: new Date().toISOString(),
-      readingOrder: this.boxes().length + 1
+      readingOrder: this.boxes().length + 1,
+      table: tag === "table" ? { outputMode: "crop" } : undefined
     });
     if (box.w > 2 && box.h > 2) {
       this.boxes.update((existing) => this.normalizeBoxOrder([...existing, box]));
@@ -664,6 +752,40 @@ export class ReviewComponent {
       w: Number(width.toFixed(2)),
       h: Number(height.toFixed(2))
     };
+  }
+
+  private moveTableGridLine(box: SemanticBox, axis: "column" | "row", lineIndex: number, dx: number, dy: number): SemanticBox {
+    if (box.tag !== "table") return box;
+    const table = this.ensureTableGrid(box);
+    const grid = table.grid!;
+    if (axis === "column") {
+      const columns = [...grid.columns];
+      columns[lineIndex] = Number(((columns[lineIndex] ?? 0) + dx).toFixed(2));
+      return { ...box, table: { outputMode: "semantic", grid: { ...grid, columns: this.normalizeGridValues(columns, box.w) } } };
+    }
+    const rows = [...grid.rows];
+    rows[lineIndex] = Number(((rows[lineIndex] ?? 0) + dy).toFixed(2));
+    return { ...box, table: { outputMode: "semantic", grid: { ...grid, rows: this.normalizeGridValues(rows, box.h) } } };
+  }
+
+  private ensureTableGrid(box: SemanticBox): NonNullable<SemanticBox["table"]> & { grid: NonNullable<NonNullable<SemanticBox["table"]>["grid"]> } {
+    const existing = box.table?.grid;
+    return {
+      outputMode: "semantic",
+      grid: {
+        columns: this.normalizeGridValues(existing?.columns?.length ? existing.columns : [box.w / 3, (box.w * 2) / 3], box.w),
+        rows: this.normalizeGridValues(existing?.rows?.length ? existing.rows : [box.h / 2], box.h),
+        mergedCells: existing?.mergedCells ?? []
+      }
+    };
+  }
+
+  private normalizeGridValues(values: number[], max: number): number[] {
+    return Array.from(new Set(values
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value) && value > 1 && value < max - 1)
+      .map((value) => Number(value.toFixed(2)))
+      .sort((a, b) => a - b)));
   }
 
   private clampBox(box: SemanticBox): SemanticBox {

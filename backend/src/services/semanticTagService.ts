@@ -16,6 +16,19 @@ export interface SemanticBox {
   h: number;
   createdAt: string;
   readingOrder?: number;
+  table?: {
+    outputMode?: "crop" | "semantic";
+    grid?: {
+      columns: number[];
+      rows: number[];
+      mergedCells?: Array<{
+        row: number;
+        column: number;
+        rowSpan: number;
+        colSpan: number;
+      }>;
+    };
+  };
   math?: {
     latex?: string;
     mathml?: string;
@@ -58,9 +71,10 @@ type WordStyle = {
 };
 
 type CssDeclarations = Record<string, string>;
-type CropSemanticBox = SemanticBox & { tag: "img" | "equation" };
+type CropSemanticBox = SemanticBox & { tag: "img" | "equation" | "table" };
 type TextSemanticBox = SemanticBox & { tag: Exclude<SemanticBoxTag, CropSemanticBox["tag"]> };
 type TableSemanticBox = SemanticBox & { tag: "table" };
+type SemanticTableGrid = NonNullable<NonNullable<SemanticBox["table"]>["grid"]>;
 type EquationRenderStyle = NonNullable<NonNullable<SemanticBox["math"]>["renderStyle"]>;
 
 const INHERITED_WORD_STYLE_KEYS = [
@@ -109,6 +123,9 @@ function wordCenterInsideBox(wordBounds: { x: number; y: number; w: number; h: n
 }
 
 function wordCanBeClaimedByBox(wordBounds: { x: number; y: number; w: number; h: number }, box: SemanticBox, overlapRatio: number): boolean {
+  if (box.tag === "table") {
+    return overlapRatio >= 0.15 || wordCenterInsideBox(wordBounds, box);
+  }
   if (isCropBox(box)) {
     return overlapRatio >= 0.7 || (overlapRatio >= 0.25 && wordCenterInsideBox(wordBounds, box));
   }
@@ -125,11 +142,15 @@ function escapeHtml(value: string): string {
 }
 
 function isTextBox(box: SemanticBox): box is TextSemanticBox {
-  return box.tag !== "img" && box.tag !== "equation";
+  return box.tag !== "img" && box.tag !== "equation" && box.tag !== "table";
 }
 
 function isCropBox(box: SemanticBox): box is CropSemanticBox {
-  return box.tag === "img" || box.tag === "equation";
+  return box.tag === "img" || box.tag === "equation" || (box.tag === "table" && box.table?.outputMode !== "semantic");
+}
+
+function isSemanticTableBox(box: SemanticBox): box is TableSemanticBox {
+  return box.tag === "table" && box.table?.outputMode === "semantic" && Boolean(box.table.grid);
 }
 
 function cssSingleQuoted(value: string): string {
@@ -333,6 +354,10 @@ function formatPx(value: number): string {
   return `${Number(value.toFixed(3))}px`;
 }
 
+function formatMetaNumber(value: number): string {
+  return String(Number(value.toFixed(3)));
+}
+
 function wordInheritedStyles(word: WordStyle): CssDeclarations {
   return {
     "font-family": `${cssSingleQuoted(word.fontFamily)}, serif`,
@@ -484,10 +509,10 @@ const FINAL_COMMON_BASE_CSS = `html, body { margin: 0; padding: 0; }
 .page__para { position: absolute; margin: 0; padding: 0; border: 0; background: transparent; white-space: pre; overflow: visible; z-index: 1; }
 .page__para--absolute .page__word { position: absolute; margin: 0; padding: 0; white-space: nowrap; overflow: visible; background: transparent; }
 .page__line { display: flex; align-items: flex-start; margin: 0; padding: 0; box-sizing: border-box; white-space: nowrap; overflow: visible; }
-.page__table { position: absolute; margin: 0; padding: 0; border: 0; border-collapse: collapse; border-spacing: 0; table-layout: fixed; background: transparent; white-space: normal; overflow: visible; z-index: 1; }
-.page__table-row { margin: 0; padding: 0; border: 0; background: transparent; }
-.page__table-cell { margin: 0; border: 0; background: transparent; box-sizing: border-box; vertical-align: top; text-align: left; white-space: pre; overflow: visible; font-weight: inherit; }
-.page__table-word { position: static; display: inline; margin: 0; padding: 0; white-space: pre; background: transparent; }
+.page__table { position: absolute; display: block; margin: 0; padding: 0; border: 0; background: transparent; white-space: normal; overflow: visible; z-index: 2; }
+.page__table tbody, .page__table-row { display: block; margin: 0; padding: 0; border: 0; background: transparent; }
+.page__table-cell { display: block; margin: 0; padding: 0; border: 0; background: transparent; box-sizing: border-box; vertical-align: top; text-align: left; line-height: 0; white-space: pre; overflow: visible; font-weight: inherit; }
+.page__table-word { display: block; margin: 0; padding: 0; white-space: pre; background: transparent; }
 .page__crop { position: absolute; display: block; margin: 0; padding: 0; border: 0; object-fit: fill; z-index: 2; }
 .math-zone { background: transparent; overflow: visible; }
 .math-crop-fallback { display: block; width: 100%; height: 100%; object-fit: fill; }
@@ -627,6 +652,38 @@ function tableWordCssRule(pageNumber: number, word: WordStyle, inherited: CssDec
   const declarations = subtractDeclarations(wordInheritedStyles(word), inherited);
   const cssText = declarationsToCss(declarations);
   return cssText ? `.page__table .page${pageNumber}__word${word.index} { ${cssText} }` : "";
+}
+
+function tableAbsoluteWordCssRule(pageNumber: number, word: WordStyle, origin: { x: number; y: number }, inherited: CssDeclarations): string {
+  const declarations: CssDeclarations = {
+    position: "absolute",
+    left: formatPx(word.x - origin.x),
+    top: formatPx(word.y - origin.y),
+    width: formatPx(word.w),
+    height: formatPx(word.h),
+    ...subtractDeclarations(wordInheritedStyles(word), inherited)
+  };
+  return `.page__table .page${pageNumber}__word${word.index} { ${declarationsToCss(declarations)} }`;
+}
+
+function normalizedGridOffsets(values: number[] | undefined, max: number): number[] {
+  const rounded = (values ?? [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value > 1 && value < max - 1)
+    .map((value) => Number(value.toFixed(2)))
+    .sort((a, b) => a - b);
+  return Array.from(new Set(rounded));
+}
+
+function gridEdges(start: number, size: number, offsets: number[]): number[] {
+  return [start, ...offsets.map((offset) => start + offset), start + size];
+}
+
+function gridCellIndex(edges: number[], value: number): number {
+  for (let index = 0; index < edges.length - 1; index += 1) {
+    if (value >= edges[index] && value <= edges[index + 1]) return index;
+  }
+  return Math.max(0, edges.length - 2);
 }
 
 function safeFileToken(value: string): string {
@@ -824,10 +881,13 @@ async function generateFinalPageFromBoxesUnlocked(jobId: string, pageIndex: numb
     mkdir(finalStyleDir, { recursive: true }),
     mkdir(styleRegistryDir, { recursive: true })
   ]);
-  const [html, css] = await Promise.all([
+  const [html, css, page] = await Promise.all([
     readFile(reviewHtmlPath, "utf8"),
-    readFile(reviewCssPath, "utf8")
+    readFile(reviewCssPath, "utf8"),
+    jobStore.getPage(jobId, pageIndex)
   ]);
+  const pageWidth = page?.pageWidth ?? 0;
+  const pageHeight = page?.pageHeight ?? 0;
   let storedStyleRegistry = await readFinalStyleRegistry(styleRegistryPath);
   if (storedStyleRegistry.classes.length === 0 && storedStyleRegistry.fontFaces.length === 0) {
     storedStyleRegistry = await readFinalStyleRegistry(path.join(finalStyleDir, "common.registry.json"));
@@ -903,16 +963,7 @@ async function generateFinalPageFromBoxesUnlocked(jobId: string, pageIndex: numb
       bounds: { x: number; y: number; w: number; h: number };
     } => Boolean(block));
 
-  const textSemanticBlocks = semanticBlocks.filter((block) => block.box.tag !== "table");
-  const tableSemanticBlocks = semanticBlocks.filter((block): block is {
-    box: TableSemanticBox;
-    elementId: string;
-    className: string;
-    selectedWords: WordStyle[];
-    isAbsolute: boolean;
-    lines: WordStyle[][];
-    bounds: { x: number; y: number; w: number; h: number };
-  } => block.box.tag === "table");
+  const textSemanticBlocks = semanticBlocks;
 
   const cropBlocks = paraBlocks
     .filter((block): block is { box: CropSemanticBox; wordIndices: number[] } => isCropBox(block.box))
@@ -924,15 +975,31 @@ async function generateFinalPageFromBoxesUnlocked(jobId: string, pageIndex: numb
         ? inferEquationRenderStyle(block.box, selectedWords)
         : null;
       if (renderStyle) applyEquationRenderStyle(block.box, renderStyle);
+      const cropType = block.box.tag === "equation" ? "eq" : block.box.tag === "table" ? "table" : "img";
       return {
         box: block.box,
-        elementId: pageElementId(pageNumber, block.box.tag === "equation" ? "eq" : "img", i + 1),
-        className: `page${pageNumber}-${block.box.tag === "equation" ? "eq" : "img"}${i + 1}`,
+        elementId: pageElementId(pageNumber, cropType, i + 1),
+        className: `page${pageNumber}-${cropType}${i + 1}`,
         fileName: semanticBoxCropFileName(pageNumber, block.box),
         selectedWords,
         renderStyle
       };
     });
+
+  const tableSemanticBlocks = paraBlocks
+    .filter((block): block is { box: TableSemanticBox; wordIndices: number[] } => isSemanticTableBox(block.box))
+    .map((block, i) => {
+      const selectedWords = block.wordIndices
+        .map((wordIndex) => byIndex.get(wordIndex))
+        .filter((word): word is WordStyle => Boolean(word));
+      return {
+        box: block.box,
+        elementId: pageElementId(pageNumber, "table", i + 1),
+        className: `page${pageNumber}-table${i + 1}`,
+        selectedWords
+      };
+    })
+    .filter((block) => block.selectedWords.length > 0);
 
   const styleClassRegistry = createStyleClassRegistry(storedStyleRegistry);
   const baseParaClass = styleClassRegistry.use("s", {
@@ -984,77 +1051,56 @@ async function generateFinalPageFromBoxesUnlocked(jobId: string, pageIndex: numb
 
   const baseTableClass = styleClassRegistry.use("tbl", {
     position: "absolute",
-    display: "table",
+    display: "block",
     margin: "0",
     padding: "0",
     border: "0",
     background: "transparent",
-    "border-collapse": "collapse",
-    "border-spacing": "0",
-    "table-layout": "fixed",
     overflow: "visible",
-    "z-index": "1"
+    "z-index": "2"
   });
 
-  const tableModels = tableSemanticBlocks.map((block, tableIndex) => {
-    const tableElementId = pageElementId(pageNumber, "table", tableIndex + 1);
-    const tableClassName = `page${pageNumber}-table${tableIndex + 1}`;
-    const lines = groupWordsIntoLines(block.selectedWords);
-    const rowSegments = lines.map(segmentTableLine);
-    const allSegments = rowSegments.flat();
-    const columnTolerance = Math.max(8, median(block.selectedWords.map((word) => word.fontSizePx)) * 0.75, median(block.selectedWords.map((word) => word.h)) * 0.75);
-    const columns = clusterColumnStarts(allSegments, columnTolerance);
-    const tableColumns = columns.length ? columns : [block.bounds.x];
-    const tableBounds = block.bounds;
-    const tableRight = tableBounds.x + tableBounds.w;
+  const tableModels = tableSemanticBlocks.map((block) => {
+    const grid = block.box.table?.grid as SemanticTableGrid;
+    const columnOffsets = normalizedGridOffsets(grid.columns, block.box.w);
+    const rowOffsets = normalizedGridOffsets(grid.rows, block.box.h);
+    const columnEdges = gridEdges(block.box.x, block.box.w, columnOffsets);
+    const rowEdges = gridEdges(block.box.y, block.box.h, rowOffsets);
+    const columnCount = Math.max(1, columnEdges.length - 1);
+    const rowCount = Math.max(1, rowEdges.length - 1);
     const parentStyles = commonDeclarations(block.selectedWords.map(wordInheritedStyles), STYLE_OUTPUT_ORDER);
-    const rows = rowSegments.map((segments, rowIndex) => {
-      const rowWords = segments.flat().sort((a, b) => a.x - b.x);
-      const rowBounds = rowWords.length ? getWordBounds(rowWords) : { x: tableBounds.x, y: tableBounds.y, w: tableBounds.w, h: 1 };
-      const nextRowWords = rowSegments[rowIndex + 1]?.flat() ?? [];
-      const nextRowBounds = nextRowWords.length ? getWordBounds(nextRowWords) : null;
-      const rowHeight = nextRowBounds ? Math.max(rowBounds.h, nextRowBounds.y - rowBounds.y) : rowBounds.h;
-      const cellsByColumn = new Map<number, WordStyle[]>();
-      for (const segment of segments) {
-        const segmentBounds = getWordBounds(segment);
-        const columnIndex = nearestColumnIndex(tableColumns, segmentBounds.x);
-        const existing = cellsByColumn.get(columnIndex) ?? [];
-        existing.push(...segment);
-        cellsByColumn.set(columnIndex, existing.sort((a, b) => a.x - b.x));
+    const cells = Array.from({ length: rowCount }, (_, rowIndex) =>
+      Array.from({ length: columnCount }, (_, columnIndex) => ({
+        rowIndex,
+        columnIndex,
+        elementId: `${block.elementId}_r${rowIndex + 1}c${columnIndex + 1}`,
+        className: `${block.className}__r${rowIndex + 1}c${columnIndex + 1}`,
+        x: columnEdges[columnIndex],
+        y: rowEdges[rowIndex],
+        width: columnEdges[columnIndex + 1] - columnEdges[columnIndex],
+        height: rowEdges[rowIndex + 1] - rowEdges[rowIndex],
+        words: [] as WordStyle[]
+      }))
+    );
+    for (const word of block.selectedWords) {
+      const centerX = word.x + word.w / 2;
+      const centerY = word.y + word.h / 2;
+      const columnIndex = gridCellIndex(columnEdges, centerX);
+      const rowIndex = gridCellIndex(rowEdges, centerY);
+      cells[rowIndex]?.[columnIndex]?.words.push(word);
+    }
+    for (const row of cells) {
+      for (const cell of row) {
+        cell.words.sort((a, b) => (a.y - b.y) || (a.x - b.x));
       }
-      const isHeader = isLikelyHeaderRow(rowWords);
-      return {
-        className: `${tableClassName}__row${rowIndex + 1}`,
-        rowHeight,
-        isHeader,
-        cells: tableColumns.map((columnX, columnIndex) => {
-          const cellWords = cellsByColumn.get(columnIndex) ?? [];
-          const cellBounds = cellWords.length ? getWordBounds(cellWords) : { x: columnX, y: rowBounds.y, w: 0, h: rowBounds.h };
-          const nextColumnX = tableColumns[columnIndex + 1] ?? tableRight;
-          const width = Math.max(1, nextColumnX - columnX);
-          const cellStyles = subtractDeclarations(commonDeclarations(cellWords.map(wordInheritedStyles), STYLE_OUTPUT_ORDER), parentStyles);
-          return {
-            elementId: `${tableElementId}_r${rowIndex + 1}c${columnIndex + 1}`,
-            classNames: ["page__table-cell", `${tableClassName}__cell`, `${tableClassName}__r${rowIndex + 1}c${columnIndex + 1}`, ...semanticStyleClasses(styleClassRegistry, cellStyles)].filter(Boolean),
-            words: cellWords,
-            text: tableCellText(cellWords),
-            width,
-            height: rowHeight,
-            paddingLeft: Math.max(0, cellBounds.x - columnX),
-            paddingTop: Math.max(0, cellBounds.y - rowBounds.y),
-            inheritedStyles: { ...parentStyles, ...cellStyles }
-          };
-        })
-      };
-    });
+    }
     return {
       ...block,
-      elementId: tableElementId,
-      className: tableClassName,
-      classNames: [baseTableClass, ...semanticStyleClasses(styleClassRegistry, parentStyles), "page__table", tableClassName].filter(Boolean),
+      classNames: [baseTableClass, ...semanticStyleClasses(styleClassRegistry, parentStyles), "page__table", block.className].filter(Boolean),
       parentStyles,
-      tableBounds,
-      rows
+      columnOffsets,
+      rowOffsets,
+      cells
     };
   });
 
@@ -1071,16 +1117,15 @@ async function generateFinalPageFromBoxesUnlocked(jobId: string, pageIndex: numb
   }).join("\n");
 
   const tableElements = tableModels.map((table) => {
-    const rowsHtml = table.rows.map((row) => {
-      const cellsHtml = row.cells.map((cell) => {
-        const cellContent = cell.words.map((word, wordIndex) => `${wordIndex > 0 ? " " : ""}${tableWordSpanHtml(pageNumber, word)}`).join("");
-        const cellTag = row.isHeader ? "th" : "td";
-        const scope = row.isHeader ? " scope=\"col\"" : "";
-        return `<${cellTag} id="${cell.elementId}" class="${cell.classNames.join(" ")}" data-text="${escapeHtml(cell.text)}"${scope}>${cellContent}</${cellTag}>`;
+    const rowsHtml = table.cells.map((row) => {
+      const cellsHtml = row.map((cell) => {
+        const cellText = tableCellText(cell.words);
+        const cellContent = cell.words.map((word) => tableWordSpanHtml(pageNumber, word)).join("");
+        return `<td id="${cell.elementId}" class="page__table-cell ${cell.className}" data-text="${escapeHtml(cellText)}">${cellContent}</td>`;
       }).join("");
-      return `<tr class="page__table-row ${row.className}">${cellsHtml}</tr>`;
+      return `<tr class="page__table-row">${cellsHtml}</tr>`;
     }).join("");
-    return `<table id="${table.elementId}" class="${table.classNames.join(" ")}" data-box-id="${escapeHtml(table.box.id)}" data-row-count="${table.rows.length}" data-column-count="${table.rows[0]?.cells.length ?? 0}"><tbody>${rowsHtml}</tbody></table>`;
+    return `<table id="${table.elementId}" class="${table.classNames.join(" ")}" data-box-id="${escapeHtml(table.box.id)}" data-table-mode="semantic" data-row-count="${table.cells.length}" data-column-count="${table.cells[0]?.length ?? 0}"><tbody>${rowsHtml}</tbody></table>`;
   }).join("\n");
 
   // Unboxed words remain absolutely positioned as before.
@@ -1112,6 +1157,11 @@ async function generateFinalPageFromBoxesUnlocked(jobId: string, pageIndex: numb
         const mathMlHtml = mathml ? `<span class="mathml-render">${mathml}</span>` : "";
         return `<figure id="${block.elementId}" class="${className}" data-box-id="${escapeHtml(block.box.id)}" data-math-status="${escapeHtml(status)}"${mathmlAttr}${latexAttr}${styleAttrs}${errorAttr}${mathmlErrorAttr}>${mathMlHtml}${cropImage}${latex ? `<figcaption class="math-latex">${escapeHtml(latex)}</figcaption>` : ""}</figure>`;
       }
+      if (block.box.tag === "table") {
+        const tableMode = block.box.table?.outputMode ?? "crop";
+        const grid = block.box.table?.grid ? ` data-grid="${escapeHtml(JSON.stringify(block.box.table.grid))}"` : "";
+        return `<img id="${block.elementId}" class="page__crop page__table-crop ${block.className}" src="./images/crops/${escapeHtml(block.fileName)}" alt="Table" data-box-id="${escapeHtml(block.box.id)}" data-table-mode="${escapeHtml(tableMode)}"${grid}>`;
+      }
       return `<img id="${block.elementId}" class="page__crop ${block.className}" src="./images/crops/${escapeHtml(block.fileName)}" alt="">`;
     })
     .join("\n");
@@ -1121,11 +1171,15 @@ async function generateFinalPageFromBoxesUnlocked(jobId: string, pageIndex: numb
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="pdf-page-number" content="${pageNumber}">
+<meta name="pdf-page-width" content="${formatMetaNumber(pageWidth)}">
+<meta name="pdf-page-height" content="${formatMetaNumber(pageHeight)}">
+<meta name="pdf-page-scale" content="1">
 <link rel="stylesheet" href="./style/common.css">
 <link rel="stylesheet" href="./style/page-${pageNumber}.css">
 </head>
 <body>
-<div class="page">
+<div class="page" data-page-number="${pageNumber}" data-page-width="${formatMetaNumber(pageWidth)}" data-page-height="${formatMetaNumber(pageHeight)}" data-page-scale="1">
 <img class="page__bg" src="./images/page-${pageNumber}.png" alt="">
 <div class="page__text">
 ${semanticElements}
@@ -1189,19 +1243,16 @@ ${imageElements}
     });
   }
   for (const table of tableModels) {
-    tableCssBlocks.push(`#${table.elementId} { left: ${formatPx(table.tableBounds.x)}; top: ${formatPx(table.tableBounds.y)}; width: ${formatPx(table.tableBounds.w)}; }`);
-    for (const row of table.rows) {
-      tableCssBlocks.push(`.${row.className} { height: ${formatPx(row.rowHeight)}; }`);
-      for (const cell of row.cells) {
-        tableCssBlocks.push(`#${cell.elementId} { width: ${formatPx(cell.width)}; height: ${formatPx(cell.height)}; padding: ${formatPx(cell.paddingTop)} 0 0 ${formatPx(cell.paddingLeft)}; }`);
+    tableCssBlocks.push(`#${table.elementId} { left: ${formatPx(table.box.x)}; top: ${formatPx(table.box.y)}; width: ${formatPx(table.box.w)}; height: ${formatPx(table.box.h)}; }`);
+    for (const row of table.cells) {
+      for (const cell of row) {
+        tableCssBlocks.push(`#${cell.elementId} { position: absolute; left: ${formatPx(cell.x - table.box.x)}; top: ${formatPx(cell.y - table.box.y)}; width: ${formatPx(cell.width)}; height: ${formatPx(cell.height)}; }`);
         for (const word of cell.words) {
-          const wordRule = tableWordCssRule(pageNumber, word, cell.inheritedStyles);
-          if (wordRule) semanticWordRules.push(wordRule);
+          semanticWordRules.push(tableAbsoluteWordCssRule(pageNumber, word, { x: cell.x, y: cell.y }, table.parentStyles));
         }
       }
     }
   }
-
   const wordRules = words
     .filter((w) => !claimed.has(w.index))
     .map((w) => wordCssRule(pageNumber, w))

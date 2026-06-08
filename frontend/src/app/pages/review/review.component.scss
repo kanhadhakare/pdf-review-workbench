@@ -359,6 +359,33 @@
   background: rgba(46, 204, 113, 0.12);
 }
 
+.table-grid-line {
+  position: absolute;
+  z-index: 2;
+  display: block;
+  border: 0;
+  padding: 0;
+  background: rgba(127, 219, 255, 0.95);
+  box-shadow: 0 0 0 2px rgba(127, 219, 255, 0.18);
+  pointer-events: auto;
+}
+
+.table-grid-line--column {
+  top: 0;
+  width: 3px;
+  height: 100%;
+  transform: translateX(-1.5px);
+  cursor: ew-resize;
+}
+
+.table-grid-line--row {
+  left: 0;
+  width: 100%;
+  height: 3px;
+  transform: translateY(-1.5px);
+  cursor: ns-resize;
+}
+
 .saved-box--selected {
   border-color: #7fdbff;
   box-shadow: 0 0 0 2px rgba(127, 219, 255, 0.32), 0 0 16px rgba(127, 219, 255, 0.18);

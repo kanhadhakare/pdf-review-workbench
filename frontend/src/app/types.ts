@@ -18,6 +18,19 @@ export interface SemanticBox {
   h: number;
   createdAt: string;
   readingOrder?: number;
+  table?: {
+    outputMode?: "crop" | "semantic";
+    grid?: {
+      columns: number[];
+      rows: number[];
+      mergedCells?: Array<{
+        row: number;
+        column: number;
+        rowSpan: number;
+        colSpan: number;
+      }>;
+    };
+  };
   math?: {
     latex?: string;
     mathml?: string;
