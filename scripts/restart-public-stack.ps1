@@ -19,7 +19,7 @@ node "$root\scripts\start-public-stack.mjs"
 Start-Sleep -Seconds 8
 
 Write-Host "Checking ports..."
-netstat -ano | findstr ":3000 :4200 :8090"
+netstat -ano | findstr ":3000 :4300 :8090"
 
 Write-Host "Checking backend..."
 Invoke-WebRequest -Uri "http://127.0.0.1:3000/api/health" -UseBasicParsing -TimeoutSec 10 | Select-Object -ExpandProperty Content

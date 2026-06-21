@@ -32,14 +32,15 @@ export async function buildFinalArchive(jobId: string): Promise<{ fileName: stri
 
   await mkdir(finalDir, { recursive: true });
   const files = await walkFiles(finalDir);
-  const archiveFiles = await Promise.all(files.map(async (filePath) => {
+  const archiveFiles: Array<{ name: string; data: Buffer }> = [];
+  for (const filePath of files) {
     const relativePath = path.relative(finalDir, filePath).replace(/\\/g, "/");
     const pageImageMatch = relativePath.match(/^images\/page-(\d+)\.png$/);
     const data = pageImageMatch
       ? await createFinalPageImage(jobId, Number(pageImageMatch[1]))
       : await readFile(filePath);
-    return { name: relativePath, data };
-  }));
+    archiveFiles.push({ name: relativePath, data });
+  }
 
   return {
     fileName: archiveFileName(job.originalFileName),

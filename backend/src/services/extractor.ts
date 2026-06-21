@@ -655,7 +655,12 @@ function buildHtml(page: PageResult, imageHref: string, cssHref: string, mode: "
   return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<link rel="stylesheet" href="${cssHref}">\n<style>${modeCss}</style>\n</head>\n<body>\n<div class="page">\n<img class="page__bg" src="${imageHref}" alt="">\n<div class="page__text">\n${elements}\n</div>\n</div>\n</body>\n</html>`;
 }
 
-async function extractWithMuPdf(filePath: string, profile: ExtractionProfile, dpi: number): Promise<PageExtraction[]> {
+async function extractWithMuPdf(
+  filePath: string,
+  profile: ExtractionProfile,
+  dpi: number,
+  onPage?: (page: PageExtraction, pageCount: number) => Promise<void>
+): Promise<PageExtraction[]> {
   const mupdf = await importMuPdf();
   if (!mupdf) throw new Error("MuPDF unavailable");
   activeEngine = "mupdf";
@@ -728,7 +733,12 @@ async function extractWithMuPdf(filePath: string, profile: ExtractionProfile, dp
             });
           }
         }
-        pages.push({ pageIndex, pageWidth, pageHeight, scale, leftMarginPx: detectLeftMarginPx(spans), spans, reviewWords, imageBytes });
+        const extracted = { pageIndex, pageWidth, pageHeight, scale, leftMarginPx: detectLeftMarginPx(spans), spans, reviewWords, imageBytes };
+        if (onPage) {
+          await onPage(extracted, pageCount);
+        } else {
+          pages.push(extracted);
+        }
       } finally {
         destroyMuPdfObject(structured);
         destroyMuPdfObject(pixmap);
@@ -824,11 +834,6 @@ async function extractFontsFromMuPdf(filePath: string, jobId: string): Promise<E
   }
 }
 
-interface PageExtractionResult {
-  pages: PageExtraction[];
-  fontManifest: FontExtractionManifest;
-}
-
 function buildMuPdfFallbackManifest(sourcePdf: string, fonts: ExtractedFontAsset[]): FontExtractionManifest {
   return {
     sourcePdf,
@@ -839,8 +844,7 @@ function buildMuPdfFallbackManifest(sourcePdf: string, fonts: ExtractedFontAsset
   };
 }
 
-async function extractPages(filePath: string, profile: ExtractionProfile, dpi: number, jobId: string): Promise<PageExtractionResult> {
-  const pages = await extractWithMuPdf(filePath, profile, dpi);
+async function extractFontManifest(filePath: string, jobId: string): Promise<FontExtractionManifest> {
   let fontManifest = await extractFontsWithPdfBox(jobId, filePath);
   if (fontManifest.fonts.length === 0) {
     try {
@@ -853,11 +857,7 @@ async function extractPages(filePath: string, profile: ExtractionProfile, dpi: n
       console.warn("[extractor] MuPDF font fallback failed:", error);
     }
   }
-  return { pages, fontManifest };
-}
-
-async function extractPageImagesOnly(filePath: string, profile: ExtractionProfile, dpi: number): Promise<PageExtraction[]> {
-  return await extractWithMuPdf(filePath, profile, dpi);
+  return fontManifest;
 }
 
 function buildCombinedReviewCss(extracted: PageExtraction, profile: ExtractionProfile, fontAssets: ExtractedFontAsset[]): string {
@@ -962,19 +962,26 @@ export async function extractPDF(job: StoredJobState, profile: ExtractionProfile
     // If pdf2htmlEX succeeded, treat it as the source of truth for HTML output.
     // We still rasterize page images + dimensions for navigation/viewport scaling.
     if (pdf2htmlExReady) {
-      const pages = await extractPageImagesOnly(job.filePath, profile, dpi);
-      await jobStore.updateJob(job.id, { pageCount: pages.length });
-      for (const extracted of pages.sort((a, b) => a.pageIndex - b.pageIndex)) {
+      let pageCount = 0;
+      await extractWithMuPdf(job.filePath, profile, dpi, async (extracted, totalPages) => {
+        if (pageCount === 0) {
+          pageCount = totalPages;
+          await jobStore.updateJob(job.id, { pageCount });
+        }
         await jobStore.savePdf2HtmlExPage(job.id, extracted.pageIndex, extracted.pageWidth, extracted.pageHeight, extracted.imageBytes);
         await jobStore.updateJob(job.id, { processedPages: extracted.pageIndex + 1 });
-      }
-      await jobStore.updateJob(job.id, { status: ExtractionStatus.done, pageCount: pages.length });
+      });
+      await jobStore.updateJob(job.id, { status: ExtractionStatus.done, pageCount });
       return;
     }
 
-    const { pages, fontManifest } = await extractPages(job.filePath, profile, dpi, job.id);
-    await jobStore.updateJob(job.id, { pageCount: pages.length });
-  for (const extracted of pages.sort((a, b) => a.pageIndex - b.pageIndex)) {
+    const fontManifest = await extractFontManifest(job.filePath, job.id);
+    let pageCount = 0;
+    await extractWithMuPdf(job.filePath, profile, dpi, async (extracted, totalPages) => {
+      if (pageCount === 0) {
+        pageCount = totalPages;
+        await jobStore.updateJob(job.id, { pageCount });
+      }
       const merged = mergeSpans(extracted.spans, profile, extracted.leftMarginPx);
       const classified = applyClassifierResults(
         merged,
@@ -995,11 +1002,11 @@ export async function extractPDF(job: StoredJobState, profile: ExtractionProfile
       );
 
       await jobStore.updateJob(job.id, { processedPages: extracted.pageIndex + 1 });
-    }
+    });
     // If pdf2htmlEX was enabled and succeeded, it is already available for the review UI
     // under /storage/jobs/<jobId>/pdf2htmlex/page-<n>.html.
     void pdf2htmlExReady;
-    await jobStore.updateJob(job.id, { status: ExtractionStatus.done, pageCount: pages.length });
+    await jobStore.updateJob(job.id, { status: ExtractionStatus.done, pageCount });
   } catch (error) {
     await jobStore.updateJob(job.id, {
       status: ExtractionStatus.failed,

@@ -43,7 +43,7 @@
         <option value="img">img crop</option>
         <option value="equation">equation</option>
       </select>
-      <button type="button" (click)="saveBoxes()" [disabled]="!boxMode() || savingBoxes() || !!blockingMessage()">{{ savingBoxes() ? 'Saving...' : 'Save Boxes' }}</button>
+      <button type="button" (click)="saveBoxes()" [disabled]="!boxMode() || !hasBoxChanges() || savingBoxes() || !!blockingMessage()">{{ savingBoxes() ? 'Saving...' : 'Save Boxes' }}</button>
       <button type="button" (click)="recognizeSelectedEquation()" [disabled]="!boxMode() || !selectedEquationBox() || recognizingEquation() || !!blockingMessage()">{{ recognizingEquation() ? 'Reading math...' : 'Read Equation' }}</button>
       <button type="button" (click)="openFinalOutput()" [disabled]="!page() || !!blockingMessage()">Open Final</button>
       <button type="button" (click)="deleteSelectedBox()" [disabled]="!boxMode() || !selectedBoxId() || !!blockingMessage()">Delete Box</button>

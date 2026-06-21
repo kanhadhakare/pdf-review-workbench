@@ -14,6 +14,16 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 export const fixesRouter = Router({ mergeParams: true });
 
+function canonicalBoxes(boxes: SemanticBox[]): string {
+  return JSON.stringify(boxes, (_key, value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+    return Object.keys(value).sort().reduce<Record<string, unknown>>((result, key) => {
+      result[key] = (value as Record<string, unknown>)[key];
+      return result;
+    }, {});
+  });
+}
+
 async function recognizeEquationBoxes(jobId: string, pageIndex: number, boxes: SemanticBox[]): Promise<void> {
   const pageNumber = pageIndex + 1;
   const finalDir = jobStore.getFinalDir(jobId);
@@ -98,15 +108,22 @@ fixesRouter.put("/boxes", async (req, res) => {
     const body = req.body as { boxes?: SemanticBox[]; recognizeEquations?: boolean };
     const boxes = Array.isArray(body.boxes) ? body.boxes : [];
     const finalDir = jobStore.getFinalDir(jobId);
-    await mkdir(finalDir, { recursive: true });
     const boxesPath = path.join(finalDir, `page-${pageNumber}.boxes.json`);
+    const storedContent = await readFile(boxesPath, "utf8").catch(() => "");
+    const storedPayload = storedContent ? JSON.parse(storedContent) as { boxes?: SemanticBox[] } : { boxes: [] };
+    const storedBoxes = Array.isArray(storedPayload.boxes) ? storedPayload.boxes : [];
+    if (canonicalBoxes(storedBoxes) === canonicalBoxes(boxes)) {
+      res.json({ ok: true, saved: storedBoxes.length, boxes: storedBoxes, unchanged: true });
+      return;
+    }
 
+    await mkdir(finalDir, { recursive: true });
     if (body.recognizeEquations) {
       await recognizeEquationBoxes(jobId, pageIndex, boxes);
     }
     await generateFinalPageFromBoxes(jobId, pageIndex, boxes);
     await writeFile(boxesPath, JSON.stringify({ boxes }, null, 2), "utf8");
-    res.json({ ok: true, saved: boxes.length, boxes });
+    res.json({ ok: true, saved: boxes.length, boxes, unchanged: false });
   } catch (error) {
     res.status(500).json({ message: error instanceof Error ? error.message : "Unable to save boxes" });
   }

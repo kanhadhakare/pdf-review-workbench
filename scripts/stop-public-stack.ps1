@@ -1,4 +1,4 @@
-$ports = @(3000, 4200, 8090)
+$ports = @(3000, 4200, 4300, 8090)
 $pids = @()
 
 foreach ($port in $ports) {
@@ -26,5 +26,5 @@ foreach ($pidValue in $pids) {
 }
 
 if ($pids.Count -eq 0) {
-  Write-Host "No public stack processes found on ports 3000, 4200, 8090."
+  Write-Host "No public stack processes found on ports 3000, 4200, 4300, 8090."
 }

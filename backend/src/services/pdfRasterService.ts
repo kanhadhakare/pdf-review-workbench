@@ -1,11 +1,18 @@
 import { readFile } from "node:fs/promises";
-import { destroyMuPdfObject } from "./mupdfLifecycle.js";
+import { destroyMuPdfObject, withMuPdfLock } from "./mupdfLifecycle.js";
 
 type MuPdfModule = typeof import("mupdf");
-type MuPdfMatrix = import("mupdf").Matrix;
-type MuPdfRect = import("mupdf").Rect;
-type MuPdfDevice = import("mupdf").Device;
-type MuPdfPixmap = import("mupdf").Pixmap;
+type MuPdfPdfPage = import("mupdf").PDFPage;
+
+type StructuredTextJson = {
+  blocks?: Array<{
+    type?: string;
+    bbox?: { x?: number; y?: number; w?: number; h?: number };
+    lines?: Array<{
+      bbox?: { x?: number; y?: number; w?: number; h?: number };
+    }>;
+  }>;
+};
 
 async function importMuPdf(): Promise<MuPdfModule | null> {
   try {
@@ -15,106 +22,60 @@ async function importMuPdf(): Promise<MuPdfModule | null> {
   }
 }
 
-function integerRect(rect: MuPdfRect): MuPdfRect {
-  return [
-    Math.floor(rect[0]),
-    Math.floor(rect[1]),
-    Math.ceil(rect[2]),
-    Math.ceil(rect[3])
-  ];
-}
-
-function createNoTextDrawDevice(mupdf: MuPdfModule, matrix: MuPdfMatrix, pixmap: MuPdfPixmap): { device: MuPdfDevice; close: () => void; destroy: () => void } {
-  const drawDevice = new mupdf.DrawDevice(matrix, pixmap) as any;
-  let skippedTextClipDepth = 0;
-  let closed = false;
-  const isSkippingTextClip = (): boolean => skippedTextClipDepth > 0;
-  const close = (): void => {
-    if (closed) return;
-    closed = true;
-    drawDevice.close();
-  };
-  const device = new mupdf.Device({
-    close,
-    fillPath: (...args) => { if (!isSkippingTextClip()) drawDevice.fillPath(...args); },
-    strokePath: (...args) => { if (!isSkippingTextClip()) drawDevice.strokePath(...args); },
-    clipPath: (...args) => { if (!isSkippingTextClip()) drawDevice.clipPath(...args); },
-    clipStrokePath: (...args) => { if (!isSkippingTextClip()) drawDevice.clipStrokePath(...args); },
-    fillText: () => void 0,
-    strokeText: () => void 0,
-    clipText: () => { skippedTextClipDepth += 1; },
-    clipStrokeText: () => { skippedTextClipDepth += 1; },
-    ignoreText: () => void 0,
-    fillShade: (...args) => { if (!isSkippingTextClip()) drawDevice.fillShade(...args); },
-    fillImage: (...args) => { if (!isSkippingTextClip()) drawDevice.fillImage(...args); },
-    fillImageMask: (...args) => { if (!isSkippingTextClip()) drawDevice.fillImageMask(...args); },
-    clipImageMask: (...args) => { if (!isSkippingTextClip()) drawDevice.clipImageMask(...args); },
-    popClip: () => {
-      if (skippedTextClipDepth > 0) {
-        skippedTextClipDepth -= 1;
-        return;
+function removePageText(page: MuPdfPdfPage): void {
+  const structured = page.toStructuredText("preserve-whitespace,preserve-spans");
+  try {
+    const json = JSON.parse(structured.asJSON(1)) as StructuredTextJson;
+    for (const block of json.blocks ?? []) {
+      if (block.type !== "text") continue;
+      for (const line of block.lines ?? []) {
+        const bbox = line.bbox ?? block.bbox;
+        const x = Number(bbox?.x);
+        const y = Number(bbox?.y);
+        const width = Number(bbox?.w);
+        const height = Number(bbox?.h);
+        if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) continue;
+        const annotation = page.createAnnotation("Redact");
+        try {
+          annotation.setRect([x, y, x + width, y + height]);
+        } finally {
+          destroyMuPdfObject(annotation, "pdf-raster text redaction");
+        }
       }
-      drawDevice.popClip();
-    },
-    beginMask: (...args) => { if (!isSkippingTextClip()) drawDevice.beginMask(...args); },
-    endMask: () => { if (!isSkippingTextClip()) drawDevice.endMask(); },
-    beginGroup: (...args) => isSkippingTextClip() ? 0 : drawDevice.beginGroup(...args),
-    endGroup: () => { if (!isSkippingTextClip()) drawDevice.endGroup(); },
-    beginTile: (...args) => isSkippingTextClip() ? 0 : drawDevice.beginTile(...args),
-    endTile: () => { if (!isSkippingTextClip()) drawDevice.endTile(); },
-    beginLayer: (...args) => { if (!isSkippingTextClip()) drawDevice.beginLayer(...args); },
-    endLayer: () => { if (!isSkippingTextClip()) drawDevice.endLayer(); }
-  });
-  return {
-    device,
-    close,
-    destroy: () => {
-      close();
-      destroyMuPdfObject(device);
-      destroyMuPdfObject(drawDevice);
     }
-  };
+    page.applyRedactions(false, 0, 0, 0);
+  } finally {
+    destroyMuPdfObject(structured, "pdf-raster structured text");
+  }
 }
 
 export async function renderPdfPagePng(filePath: string, pageIndex: number, dpi: number, options: { omitText?: boolean } = {}): Promise<Uint8Array> {
-  const mupdf = await importMuPdf();
-  if (!mupdf) {
-    throw new Error("MuPDF unavailable for final page rasterization");
-  }
-  const pdfBytes = await readFile(filePath);
-  const document = mupdf.Document.openDocument(pdfBytes, "application/pdf");
-  try {
-    const page = document.loadPage(pageIndex);
+  return withMuPdfLock(async () => {
+    const mupdf = await importMuPdf();
+    if (!mupdf) {
+      throw new Error("MuPDF unavailable for final page rasterization");
+    }
+    const pdfBytes = await readFile(filePath);
+    const document = mupdf.Document.openDocument(pdfBytes, "application/pdf");
     try {
-      const scale = Math.max(72, dpi) / 72;
-      const matrix = mupdf.Matrix.scale(scale, scale);
-      if (options.omitText) {
-        let pixmap: MuPdfPixmap | null = null;
-        let device: ReturnType<typeof createNoTextDrawDevice> | null = null;
+      const page = document.loadPage(pageIndex);
+      try {
+        const scale = Math.max(72, dpi) / 72;
+        const matrix = mupdf.Matrix.scale(scale, scale);
+        if (options.omitText) {
+          removePageText(page as MuPdfPdfPage);
+        }
+        const pixmap = page.toPixmap(matrix, mupdf.ColorSpace.DeviceRGB, false, true);
         try {
-          const bounds = page.getBounds();
-          const pixmapBounds = integerRect(mupdf.Rect.transform(bounds, matrix) as MuPdfRect);
-          pixmap = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, pixmapBounds, false);
-          pixmap.clear(255);
-          device = createNoTextDrawDevice(mupdf, matrix, pixmap);
-          page.run(device.device, mupdf.Matrix.identity);
-          device.close();
           return new Uint8Array(pixmap.asPNG());
         } finally {
-          device?.destroy();
-          destroyMuPdfObject(pixmap);
+          destroyMuPdfObject(pixmap, "pdf-raster pixmap");
         }
-      }
-      const pixmap = page.toPixmap(matrix, mupdf.ColorSpace.DeviceRGB, false, true);
-      try {
-        return new Uint8Array(pixmap.asPNG());
       } finally {
-        destroyMuPdfObject(pixmap);
+        destroyMuPdfObject(page, "pdf-raster page");
       }
     } finally {
-      destroyMuPdfObject(page);
+      destroyMuPdfObject(document, "pdf-raster document");
     }
-  } finally {
-    destroyMuPdfObject(document);
-  }
+  });
 }

@@ -47,7 +47,7 @@ Invoke-Checked "Start Windows app stack" {
 Start-Sleep -Seconds 8
 
 Invoke-Checked "Check local ports" {
-  netstat -ano | findstr ":3000 :4200 :8090"
+  netstat -ano | findstr ":3000 :4300 :8090"
 }
 
 Invoke-Checked "Check backend health" {

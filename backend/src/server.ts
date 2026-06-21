@@ -26,7 +26,16 @@ async function ensureDirectory(dirPath: string, label: string): Promise<void> {
 
 app.use(cors({ origin: getCorsOrigins() }));
 app.use(express.json({ limit: "10mb" }));
-app.use("/storage/jobs", express.static(path.join(storageRoot, "jobs")));
+app.use("/storage/jobs", express.static(path.join(storageRoot, "jobs"), {
+  setHeaders: (res, filePath) => {
+    const extension = path.extname(filePath).toLowerCase();
+    if (extension === ".html" || extension === ".css" || extension === ".json") {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
+    }
+  }
+}));
 app.use("/api/jobs", jobsRouter);
 app.use("/api/jobs/:id/pages/:pageIndex", fixesRouter);
 app.use("/api/profiles", profilesRouter);

@@ -27,8 +27,8 @@ export class FixService {
     return this.http.get<{ boxes: SemanticBox[] }>(`/api/jobs/${jobId}/pages/${pageIndex}/boxes`);
   }
 
-  saveBoxes(jobId: string, pageIndex: number, boxes: SemanticBox[], recognizeEquations = false): Observable<{ ok: true; saved: number; boxes: SemanticBox[] }> {
-    return this.http.put<{ ok: true; saved: number; boxes: SemanticBox[] }>(`/api/jobs/${jobId}/pages/${pageIndex}/boxes`, { boxes, recognizeEquations });
+  saveBoxes(jobId: string, pageIndex: number, boxes: SemanticBox[], recognizeEquations = false): Observable<{ ok: true; saved: number; boxes: SemanticBox[]; unchanged?: boolean }> {
+    return this.http.put<{ ok: true; saved: number; boxes: SemanticBox[]; unchanged?: boolean }>(`/api/jobs/${jobId}/pages/${pageIndex}/boxes`, { boxes, recognizeEquations });
   }
 
   recognizeEquation(jobId: string, pageIndex: number, boxId: string, boxes: SemanticBox[]): Observable<{ box: SemanticBox; result: { ok: boolean; status: "ok" | "unavailable" | "failed"; latex?: string; error?: string; mathml?: string; mathmlStatus?: "ok" | "failed"; mathmlError?: string }; cropUrl?: string }> {

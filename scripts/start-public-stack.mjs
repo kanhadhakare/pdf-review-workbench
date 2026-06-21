@@ -49,10 +49,10 @@ if (!(await isPortOpen(3000))) {
   console.log("backend already running on 3000");
 }
 
-if (!(await isPortOpen(4200))) {
-  spawnDetached("frontend", "cmd.exe", ["/c", "npm.cmd", "run", "start", "--", "--host", "0.0.0.0"], path.join(root, "frontend"), "public-frontend.log");
+if (!(await isPortOpen(4300))) {
+  spawnDetached("frontend", "cmd.exe", ["/c", "npm.cmd", "run", "start", "--", "--host", "0.0.0.0", "--port", "4300"], path.join(root, "frontend"), "public-frontend.log");
 } else {
-  console.log("frontend already running on 4200");
+  console.log("frontend already running on 4300");
 }
 
 if (!(await isPortOpen(8090))) {

@@ -6,7 +6,7 @@ This setup serves `https://tools.dlskr.com` through Cloudflare Tunnel in WSL and
 
 - Public app: `https://tools.dlskr.com`
 - Windows gateway: `http://127.0.0.1:8090`
-- Frontend dev server: `http://127.0.0.1:4200`
+- Frontend dev server: `http://127.0.0.1:4300`
 - Backend API: `http://127.0.0.1:3000`
 
 ## Credentials
@@ -104,7 +104,7 @@ ingress:
 Check Windows services:
 
 ```powershell
-netstat -ano | findstr ":3000 :4200 :8090"
+netstat -ano | findstr ":3000 :4300 :8090"
 curl.exe -I http://127.0.0.1:8090
 ```
 

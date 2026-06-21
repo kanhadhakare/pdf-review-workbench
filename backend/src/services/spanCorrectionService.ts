@@ -170,8 +170,10 @@ export async function getSpanCorrections(jobId: string): Promise<SpanCorrection[
 export async function saveSpanCorrection(jobId: string, input: Omit<SpanCorrection, "id" | "createdAt" | "updatedAt"> & Partial<Pick<SpanCorrection, "id">>): Promise<{ corrections: SpanCorrection[]; affectedPages: number[] }> {
   const existing = await getSpanCorrections(jobId);
   const now = new Date().toISOString();
+  const inputKey = correctionKey(input);
+  const previousCorrection = existing.find((item) => item.id === input.id || correctionKey(item) === inputKey);
   const nextCorrection: SpanCorrection = {
-    id: input.id ?? randomUUID(),
+    id: input.id ?? previousCorrection?.id ?? randomUUID(),
     scope: input.scope,
     pageIndex: input.pageIndex,
     wordIndex: input.wordIndex,
@@ -180,10 +182,10 @@ export async function saveSpanCorrection(jobId: string, input: Omit<SpanCorrecti
     fontSizePx: input.fontSizePx,
     fontWeight: input.fontWeight,
     fontStyle: input.fontStyle,
-    topDeltaPx: input.topDeltaPx,
-    leftDeltaPx: input.leftDeltaPx,
+    topDeltaPx: (previousCorrection?.topDeltaPx ?? 0) + input.topDeltaPx,
+    leftDeltaPx: (previousCorrection?.leftDeltaPx ?? 0) + input.leftDeltaPx,
     letterSpacingPx: input.letterSpacingPx,
-    createdAt: existing.find((item) => item.id === input.id)?.createdAt ?? now,
+    createdAt: previousCorrection?.createdAt ?? now,
     updatedAt: now
   };
   const replaceKey = correctionKey(nextCorrection);

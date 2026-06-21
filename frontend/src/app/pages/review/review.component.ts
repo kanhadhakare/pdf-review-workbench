@@ -67,6 +67,7 @@ export class ReviewComponent {
   readonly selectedBoxId = signal<string | null>(null);
   readonly boxInteraction = signal<BoxInteraction | null>(null);
   readonly boxesDirty = signal(false);
+  readonly hasBoxChanges = computed(() => this.boxSignature(this.boxes()) !== this.savedBoxesSignature);
   readonly savingBoxes = signal(false);
   readonly recognizingEquation = signal(false);
   readonly equationMessage = signal("");
@@ -87,6 +88,7 @@ export class ReviewComponent {
   readonly savingCorrection = signal(false);
   readonly correctionDrawerOffset = signal({ x: 0, y: 0 });
   private selectedReviewElement: HTMLElement | null = null;
+  private savedBoxesSignature = "[]";
   private correctionDrawerDrag: { startClientX: number; startClientY: number; startOffsetX: number; startOffsetY: number } | null = null;
   readonly selectedEquationBox = computed(() => {
     const selectedBoxId = this.selectedBoxId();
@@ -359,11 +361,14 @@ export class ReviewComponent {
         this.loading.set("");
         this.fixes.getBoxes(this.jobId(), index).subscribe({
           next: ({ boxes }) => {
-            this.boxes.set(Array.isArray(boxes) ? this.normalizeBoxOrder(boxes) : []);
+            const loadedBoxes = Array.isArray(boxes) ? this.normalizeBoxOrder(boxes) : [];
+            this.boxes.set(loadedBoxes);
+            this.savedBoxesSignature = this.boxSignature(loadedBoxes);
             this.boxesDirty.set(false);
           },
           error: () => {
             this.boxes.set([]);
+            this.savedBoxesSignature = "[]";
             this.boxesDirty.set(false);
           }
         });
@@ -574,6 +579,7 @@ export class ReviewComponent {
     this.fixes.recognizeEquation(this.jobId(), page.pageIndex, box.id, this.boxes()).subscribe({
       next: ({ box: updatedBox, result }) => {
         this.boxes.update((existing) => this.normalizeBoxOrder(existing.map((candidate) => (candidate.id === updatedBox.id ? updatedBox : candidate))));
+        this.savedBoxesSignature = this.boxSignature(this.boxes());
         this.boxesDirty.set(false);
         this.finalRefreshToken.update((value) => value + 1);
         this.equationMessage.set(
@@ -684,14 +690,19 @@ export class ReviewComponent {
     const page = this.page();
     if (!page) return false;
     const orderedBoxes = this.normalizeBoxOrder(this.boxes());
-    if (!orderedBoxes.length && !this.boxesDirty()) return true;
+    if (this.boxSignature(orderedBoxes) === this.savedBoxesSignature) {
+      this.boxesDirty.set(false);
+      return true;
+    }
     this.boxes.set(orderedBoxes);
     this.savingBoxes.set(true);
     this.blockingMessage.set(message);
     this.equationMessage.set("Saving page...");
     try {
       const response = await firstValueFrom(this.fixes.saveBoxes(this.jobId(), page.pageIndex, orderedBoxes, true));
-      this.boxes.set(this.normalizeBoxOrder(response.boxes ?? orderedBoxes));
+      const savedBoxes = this.normalizeBoxOrder(response.boxes ?? orderedBoxes);
+      this.boxes.set(savedBoxes);
+      this.savedBoxesSignature = this.boxSignature(savedBoxes);
       this.boxesDirty.set(false);
       this.finalRefreshToken.update((value) => value + 1);
       const equationCount = (response.boxes ?? orderedBoxes).filter((box) => box.tag === "equation").length;
@@ -823,5 +834,20 @@ export class ReviewComponent {
 
   private normalizeBoxOrder(boxes: SemanticBox[]): SemanticBox[] {
     return this.orderBoxes(boxes).map((box, index) => ({ ...box, readingOrder: index + 1 }));
+  }
+
+  private boxSignature(boxes: SemanticBox[]): string {
+    return JSON.stringify(this.normalizeBoxOrder(boxes).map((box) => ({
+      id: box.id,
+      tag: box.tag,
+      x: Number(box.x.toFixed(3)),
+      y: Number(box.y.toFixed(3)),
+      w: Number(box.w.toFixed(3)),
+      h: Number(box.h.toFixed(3)),
+      createdAt: box.createdAt,
+      readingOrder: box.readingOrder ?? 0,
+      table: box.table ?? null,
+      math: box.math ?? null
+    })));
   }
 }
