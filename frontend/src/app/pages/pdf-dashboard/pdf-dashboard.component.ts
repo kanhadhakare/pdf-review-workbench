@@ -1,5 +1,5 @@
 import { CommonModule } from "@angular/common";
-import { ChangeDetectionStrategy, Component, inject, signal } from "@angular/core";
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from "@angular/core";
 import { RouterLink } from "@angular/router";
 import { JobService } from "../../services/job.service";
 import { type JobListItem } from "../../types";
@@ -17,20 +17,56 @@ export class PdfDashboardComponent {
   readonly items = signal<JobListItem[]>([]);
   readonly error = signal("");
   readonly deletingJobId = signal<string | null>(null);
+  readonly filter = signal<"all" | "pdf" | "archive">("all");
+  readonly filteredItems = computed(() => this.items().filter((item) => {
+    if (this.filter() === "all") return true;
+    const isArchive = item.job.sourceType === "epub" || item.job.sourceType === "html-zip";
+    return this.filter() === "archive" ? isArchive : !isArchive;
+  }));
+  readonly pdfCount = computed(() => this.items().filter((item) => item.job.sourceType !== "epub" && item.job.sourceType !== "html-zip").length);
+  readonly archiveCount = computed(() => this.items().length - this.pdfCount());
 
   constructor() {
     this.jobs.listJobs().subscribe({
       next: (items) => this.items.set(items ?? []),
-      error: () => this.error.set("Unable to load uploaded PDFs.")
+      error: () => this.error.set("Unable to load uploaded books.")
     });
   }
 
   iconUrl(item: JobListItem): string | null {
-    return item.job.pageCount > 0 ? `/api/jobs/${item.job.id}/pages/0/image` : null;
+    return item.job.sourceType !== "epub" && item.job.sourceType !== "html-zip" && item.job.pageCount > 0
+      ? `/api/jobs/${item.job.id}/pages/0/image`
+      : null;
+  }
+
+  openRoute(item: JobListItem): string[] {
+    return ["/review", item.job.id];
+  }
+
+  isArchive(item: JobListItem): boolean {
+    return item.job.sourceType === "epub" || item.job.sourceType === "html-zip";
+  }
+
+  canDownloadBuilds(item: JobListItem): boolean {
+    return item.job.status === "done";
+  }
+
+  openLabel(item: JobListItem): string {
+    return item.job.sourceType === "epub" || item.job.sourceType === "html-zip" ? "Open zoning" : "Open review";
+  }
+
+  sourceLabel(item: JobListItem): string {
+    if (item.job.sourceType === "epub") return "EPUB";
+    if (item.job.sourceType === "html-zip") return "HTML ZIP";
+    return "PDF";
   }
 
   finalZipUrl(item: JobListItem): string {
     return `${this.jobs.getFinalZipUrl(item.job.id)}?v=${Date.now()}`;
+  }
+
+  reviewZipUrl(item: JobListItem): string {
+    return `${this.jobs.getReviewZipUrl(item.job.id)}?v=${Date.now()}`;
   }
 
   deleteBook(item: JobListItem): void {
@@ -43,7 +79,7 @@ export class PdfDashboardComponent {
         this.deletingJobId.set(null);
       },
       error: () => {
-        this.error.set("Unable to delete PDF from server.");
+        this.error.set("Unable to delete book from server.");
         this.deletingJobId.set(null);
       }
     });

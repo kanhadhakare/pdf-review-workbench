@@ -1,7 +1,7 @@
 import { CommonModule } from "@angular/common";
 import { ChangeDetectionStrategy, Component, ElementRef, HostListener, computed, inject, signal, viewChild } from "@angular/core";
 import { ActivatedRoute, Router, RouterLink } from "@angular/router";
-import { type JobEditSummary, type PageResult, type SpanCorrectionScope } from "../../types";
+import { type ArchiveZoningCssStrategy, type ImportedBookManifest, type JobEditSummary, type PageResult, type SourceType, type SpanCorrectionScope } from "../../types";
 import { JobService } from "../../services/job.service";
 import { PageNavComponent } from "../../components/page-nav/page-nav.component";
 import { FormsModule } from "@angular/forms";
@@ -46,11 +46,16 @@ export class ReviewComponent {
   private readonly fixes = inject(FixService);
   private readonly sanitizer = inject(DomSanitizer);
   private readonly editorViewport = viewChild<ElementRef<HTMLDivElement>>("editorViewport");
+  private readonly reviewIframe = viewChild<ElementRef<HTMLIFrameElement>>("reviewIframe");
   readonly jobId = signal(this.route.snapshot.paramMap.get("jobId") ?? "");
 
   readonly page = signal<PageResult | null>(null);
   readonly pageIndex = signal(0);
   readonly pageCount = signal(0);
+  readonly sourceType = signal<SourceType>("pdf");
+  readonly archiveManifest = signal<ImportedBookManifest | null>(null);
+  readonly isArchiveSource = computed(() => this.sourceType() === "epub" || this.sourceType() === "html-zip");
+  readonly showArchiveZoningNotice = signal(false);
   readonly confidenceMap = signal<Record<number, number>>({});
   readonly editCountMap = signal<Record<number, number>>({});
   readonly editSummary = signal<JobEditSummary | null>(null);
@@ -63,11 +68,13 @@ export class ReviewComponent {
   readonly boxMode = signal(false);
   readonly boxes = signal<SemanticBox[]>([]);
   readonly activeTag = signal<SemanticBoxTag>("p");
+  readonly archiveFinalCssStrategy = signal<ArchiveZoningCssStrategy>("factor-common-css");
   readonly drawingBox = signal<{ startX: number; startY: number; x: number; y: number; w: number; h: number } | null>(null);
   readonly selectedBoxId = signal<string | null>(null);
   readonly boxInteraction = signal<BoxInteraction | null>(null);
   readonly boxesDirty = signal(false);
   readonly hasBoxChanges = computed(() => this.boxSignature(this.boxes()) !== this.savedBoxesSignature);
+  readonly hasZoningOutputChanges = computed(() => this.hasBoxChanges() || (this.isArchiveSource() && this.archiveFinalCssStrategy() !== this.savedArchiveFinalCssStrategy));
   readonly savingBoxes = signal(false);
   readonly recognizingEquation = signal(false);
   readonly equationMessage = signal("");
@@ -89,6 +96,8 @@ export class ReviewComponent {
   readonly correctionDrawerOffset = signal({ x: 0, y: 0 });
   private selectedReviewElement: HTMLElement | null = null;
   private savedBoxesSignature = "[]";
+  private savedArchiveFinalCssStrategy: ArchiveZoningCssStrategy = "factor-common-css";
+  private archiveFinalPreparedPageIndex = -1;
   private correctionDrawerDrag: { startClientX: number; startClientY: number; startOffsetX: number; startOffsetY: number } | null = null;
   readonly selectedEquationBox = computed(() => {
     const selectedBoxId = this.selectedBoxId();
@@ -103,6 +112,9 @@ export class ReviewComponent {
   readonly reviewHtmlUrl = computed<SafeResourceUrl>(() => {
     const page = this.page();
     if (!page) return this.sanitizer.bypassSecurityTrustResourceUrl("about:blank");
+    if (this.isArchiveSource()) {
+      return this.sanitizer.bypassSecurityTrustResourceUrl(this.importedPageUrl(page.pageIndex));
+    }
     const pageNumber = page.pageIndex + 1;
     const token = this.reviewRefreshToken();
     return this.sanitizer.bypassSecurityTrustResourceUrl(`/storage/jobs/${this.jobId()}/review/page-${pageNumber}.html?v=${token}`);
@@ -119,39 +131,43 @@ export class ReviewComponent {
     this.jobs.getResumeInfo(this.jobId()).subscribe({
       next: (resume) => {
         this.draftPageMap.set(Object.fromEntries((resume.draftPageIndices ?? []).map((index) => [index, true])));
-        this.jobs.getEditSummary(this.jobId()).subscribe({
-          next: (data: any) => {
-            const job = data.job as any;
-            const editSummary = data.editSummary as JobEditSummary;
-            this.pageCount.set(job.pageCount);
-            this.editSummary.set(editSummary);
-            this.editCountMap.set({ ...editSummary.editsByPage });
-            const resumeIndex = resume.lastVisitedPageIndex ?? (resume.draftPageIndices?.[resume.draftPageIndices.length - 1] ?? 0);
-            const nextIndex = this.initialPageIndex(job.pageCount, resumeIndex);
-            this.pageIndex.set(nextIndex);
-            this.replacePageQueryParam(nextIndex);
-            this.loadPage(nextIndex);
+        const resumeIndex = resume.lastVisitedPageIndex ?? (resume.draftPageIndices?.[resume.draftPageIndices.length - 1] ?? 0);
+        this.initializeSession(resumeIndex);
+      },
+      error: () => this.initializeSession(0)
+    });
+  }
+
+  private initializeSession(resumeIndex: number): void {
+    this.jobs.getEditSummary(this.jobId()).subscribe({
+      next: ({ job, editSummary }) => {
+        this.sourceType.set(job.sourceType ?? "pdf");
+        this.editSummary.set(editSummary);
+        this.editCountMap.set({ ...editSummary.editsByPage });
+        if (!this.isArchiveSource()) {
+          this.openInitialPage(job.pageCount, resumeIndex);
+          return;
+        }
+        this.jobs.getSourceManifest(this.jobId()).subscribe({
+          next: (manifest) => {
+            this.archiveManifest.set(manifest);
+            this.showArchiveZoningNotice.set(true);
+            this.boxMode.set(true);
+            this.openInitialPage(manifest.pages.length, resumeIndex);
           },
-          error: () => this.loading.set("Unable to load review session.")
+          error: () => this.loading.set("Unable to load imported XHTML pages.")
         });
       },
-      error: () => {
-        this.jobs.getEditSummary(this.jobId()).subscribe({
-          next: (data: any) => {
-            const job = data.job as any;
-            const editSummary = data.editSummary as JobEditSummary;
-            this.pageCount.set(job.pageCount);
-            this.editSummary.set(editSummary);
-            this.editCountMap.set({ ...editSummary.editsByPage });
-            const nextIndex = this.initialPageIndex(job.pageCount, 0);
-            this.pageIndex.set(nextIndex);
-            this.replacePageQueryParam(nextIndex);
-            this.loadPage(nextIndex);
-          },
-          error: () => this.loading.set("Unable to load review session.")
-        });
-      }
+      error: () => this.loading.set("Unable to load review session.")
     });
+  }
+
+  private openInitialPage(pageCount: number, resumeIndex: number): void {
+    this.pageCount.set(pageCount);
+    const nextIndex = this.initialPageIndex(pageCount, resumeIndex);
+    this.pageIndex.set(nextIndex);
+    this.replacePageQueryParam(nextIndex);
+    this.loadPage(nextIndex);
   }
 
   selectPage(index: number): void { void this.navigateToPage(index); }
@@ -231,6 +247,8 @@ export class ReviewComponent {
   transform(): string { return `scale(${this.pageScale()})`; }
   scaledWidth(): number { return this.page() ? Math.round(this.page()!.pageWidth * this.pageScale()) : 0; }
   scaledHeight(): number { return this.page() ? Math.round(this.page()!.pageHeight * this.pageScale()) : 0; }
+  reviewZipUrl(): string { return `${this.jobs.getReviewZipUrl(this.jobId())}?v=${Date.now()}`; }
+  finalZipUrl(): string { return `${this.jobs.getFinalZipUrl(this.jobId())}?v=${Date.now()}`; }
 
   updatePending(summary: { total: number; byType: Record<string, number> }): void {
     void summary;
@@ -258,6 +276,7 @@ export class ReviewComponent {
       clickEvent.stopPropagation();
       this.selectReviewSpan(wordElement as unknown as HTMLElement, iframe);
     });
+    this.maybePrepareArchiveFinalPage();
   }
 
   applySpanCorrection(): void {
@@ -350,32 +369,63 @@ export class ReviewComponent {
     this.boxInteraction.set(null);
     this.drawingBox.set(null);
     this.equationMessage.set("");
+    this.archiveFinalPreparedPageIndex = -1;
     this.jobs.getResumeInfo(this.jobId()).subscribe({
       next: (resume) => this.draftPageMap.set(Object.fromEntries((resume.draftPageIndices ?? []).map((value) => [value, true]))),
       error: () => void 0
     });
+    if (this.isArchiveSource()) {
+      const archivePage = this.archiveManifest()?.pages[index];
+      if (!archivePage) {
+        this.loading.set("Unable to load imported XHTML page.");
+        return;
+      }
+      this.applyLoadedPage({
+        pageIndex: index,
+        imageUrl: "",
+        htmlContent: "",
+        blocks: [],
+        confidence: 1,
+        pageWidth: Math.max(1, Math.round(archivePage.width || 1200)),
+        pageHeight: Math.max(1, Math.round(archivePage.height || 1600)),
+        leftMarginPx: 0,
+        reviewStatus: "unvisited"
+      });
+      return;
+    }
     this.jobs.getPage(this.jobId(), index).subscribe({
-      next: (page) => {
-        this.page.set(page);
-        this.confidenceMap.update((current) => ({ ...current, [page.pageIndex]: page.confidence }));
-        this.loading.set("");
-        this.fixes.getBoxes(this.jobId(), index).subscribe({
-          next: ({ boxes }) => {
-            const loadedBoxes = Array.isArray(boxes) ? this.normalizeBoxOrder(boxes) : [];
-            this.boxes.set(loadedBoxes);
-            this.savedBoxesSignature = this.boxSignature(loadedBoxes);
-            this.boxesDirty.set(false);
-          },
-          error: () => {
-            this.boxes.set([]);
-            this.savedBoxesSignature = "[]";
-            this.boxesDirty.set(false);
-          }
-        });
-        queueMicrotask(() => this.updateScale());
-      },
+      next: (page) => this.applyLoadedPage(page),
       error: () => this.loading.set("Unable to load page.")
     });
+  }
+
+  private applyLoadedPage(page: PageResult): void {
+    this.page.set(page);
+    this.confidenceMap.update((current) => ({ ...current, [page.pageIndex]: page.confidence }));
+    this.loading.set("");
+    this.fixes.getBoxes(this.jobId(), page.pageIndex).subscribe({
+      next: ({ boxes, archiveFinalCssStrategy }) => {
+        const loadedBoxes = Array.isArray(boxes) ? this.normalizeBoxOrder(boxes) : [];
+        const loadedStrategy = archiveFinalCssStrategy ?? "factor-common-css";
+        this.boxes.set(loadedBoxes);
+        this.archiveFinalCssStrategy.set(loadedStrategy);
+        this.savedBoxesSignature = this.boxSignature(loadedBoxes);
+        this.savedArchiveFinalCssStrategy = loadedStrategy;
+        this.boxesDirty.set(false);
+        if (this.isArchiveSource()) {
+          this.showFinalPane.set(false);
+          this.maybePrepareArchiveFinalPage();
+        }
+      },
+      error: () => {
+        this.boxes.set([]);
+        this.archiveFinalCssStrategy.set("factor-common-css");
+        this.savedBoxesSignature = "[]";
+        this.savedArchiveFinalCssStrategy = "factor-common-css";
+        this.boxesDirty.set(false);
+      }
+    });
+    queueMicrotask(() => this.updateScale());
   }
 
   private async navigateToPage(index: number): Promise<void> {
@@ -405,7 +455,24 @@ export class ReviewComponent {
   }
 
   private finalPageUrl(pageIndex: number): string {
-    return `/storage/jobs/${this.jobId()}/final/page-${pageIndex + 1}.html`;
+    if (this.isArchiveSource()) return this.archiveFinalPageUrl(pageIndex);
+    return `/storage/jobs/${this.jobId()}/final/page-${pageIndex + 1}.xhtml`;
+  }
+
+  private importedPageUrl(pageIndex: number): string {
+    const manifest = this.archiveManifest();
+    const archivePage = manifest?.pages[pageIndex];
+    if (!archivePage) return "about:blank";
+    const root = manifest?.reviewRoot ?? "source";
+    const encodedPath = archivePage.reviewPath.split("/").map((segment) => encodeURIComponent(segment)).join("/");
+    return `/storage/jobs/${encodeURIComponent(this.jobId())}/imported/${encodeURIComponent(root)}/${encodedPath}`;
+  }
+
+  private archiveFinalPageUrl(pageIndex: number): string {
+    const archivePage = this.archiveManifest()?.pages[pageIndex];
+    if (!archivePage) return "about:blank";
+    const encodedPath = archivePage.reviewPath.split("/").map((segment) => encodeURIComponent(segment)).join("/");
+    return `/storage/jobs/${encodeURIComponent(this.jobId())}/final/source/${encodedPath}`;
   }
 
   overlayMouseDown(event: MouseEvent): void {
@@ -690,7 +757,7 @@ export class ReviewComponent {
     const page = this.page();
     if (!page) return false;
     const orderedBoxes = this.normalizeBoxOrder(this.boxes());
-    if (this.boxSignature(orderedBoxes) === this.savedBoxesSignature) {
+    if (!this.hasZoningOutputChanges()) {
       this.boxesDirty.set(false);
       return true;
     }
@@ -699,14 +766,29 @@ export class ReviewComponent {
     this.blockingMessage.set(message);
     this.equationMessage.set("Saving page...");
     try {
-      const response = await firstValueFrom(this.fixes.saveBoxes(this.jobId(), page.pageIndex, orderedBoxes, true));
+      const archiveFinalHtml = this.isArchiveSource() ? this.buildArchiveFinalHtml(orderedBoxes, this.archiveFinalCssStrategy()) : undefined;
+      if (this.isArchiveSource() && !archiveFinalHtml) throw new Error("Unable to read the imported page for final generation.");
+      const response = await firstValueFrom(this.fixes.saveBoxes(this.jobId(), page.pageIndex, orderedBoxes, !this.isArchiveSource(), archiveFinalHtml ?? undefined, this.isArchiveSource() ? this.archiveFinalCssStrategy() : undefined));
       const savedBoxes = this.normalizeBoxOrder(response.boxes ?? orderedBoxes);
+      const savedStrategy = response.archiveFinalCssStrategy ?? this.archiveFinalCssStrategy();
       this.boxes.set(savedBoxes);
+      this.archiveFinalCssStrategy.set(savedStrategy);
       this.savedBoxesSignature = this.boxSignature(savedBoxes);
+      this.savedArchiveFinalCssStrategy = savedStrategy;
       this.boxesDirty.set(false);
-      this.finalRefreshToken.update((value) => value + 1);
+      if (!this.isArchiveSource()) this.finalRefreshToken.update((value) => value + 1);
+      if (this.isArchiveSource()) {
+        this.archiveFinalPreparedPageIndex = page.pageIndex;
+        this.finalRefreshToken.update((value) => value + 1);
+      }
+      this.showFinalPane.set(!this.isArchiveSource() || savedBoxes.length > 0);
+      queueMicrotask(() => this.updateScale());
       const equationCount = (response.boxes ?? orderedBoxes).filter((box) => box.tag === "equation").length;
-      this.equationMessage.set(equationCount > 0 ? `Saved page. Equation boxes processed: ${equationCount}.` : "Saved page.");
+      this.equationMessage.set(this.isArchiveSource()
+        ? "Zoning saved for imported XHTML."
+        : equationCount > 0
+          ? `Saved page. Equation boxes processed: ${equationCount}.`
+          : "Saved page.");
       return true;
     } catch (error: any) {
       const errorMessage = error?.error?.message ?? error?.message ?? "Unable to save page.";
@@ -716,6 +798,194 @@ export class ReviewComponent {
       this.savingBoxes.set(false);
       this.blockingMessage.set("");
     }
+  }
+
+  private maybePrepareArchiveFinalPage(): void {
+    if (!this.isArchiveSource()) return;
+    const page = this.page();
+    const boxes = this.boxes();
+    if (!page || boxes.length === 0 || this.archiveFinalPreparedPageIndex === page.pageIndex || this.hasZoningOutputChanges()) return;
+    const archiveFinalHtml = this.buildArchiveFinalHtml(boxes, this.archiveFinalCssStrategy());
+    if (!archiveFinalHtml) return;
+    this.archiveFinalPreparedPageIndex = page.pageIndex;
+    this.fixes.saveBoxes(this.jobId(), page.pageIndex, boxes, false, archiveFinalHtml, this.archiveFinalCssStrategy()).subscribe({
+      next: () => {
+        this.finalRefreshToken.update((value) => value + 1);
+        this.showFinalPane.set(true);
+        queueMicrotask(() => this.updateScale());
+      },
+      error: () => {
+        this.archiveFinalPreparedPageIndex = -1;
+        this.equationMessage.set("Zoning is saved, but the final XHTML page could not be generated.");
+      }
+    });
+  }
+
+  private buildArchiveFinalHtml(boxes: SemanticBox[], cssStrategy: ArchiveZoningCssStrategy): string | null {
+    const iframe = this.reviewIframe()?.nativeElement;
+    const frameDocument = iframe?.contentDocument;
+    const frameWindow = iframe?.contentWindow;
+    const page = this.page();
+    if (!frameDocument?.body || !frameWindow || !page) return null;
+
+    type Candidate = {
+      key: string;
+      element: HTMLElement;
+      style: CSSStyleDeclaration;
+      styleValues: Map<string, string>;
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+    };
+
+    const visualProperties = [
+      "position", "display", "left", "top", "width", "height", "z-index",
+      "font-family", "font-size", "font-weight", "font-style", "font-variant", "font-stretch",
+      "line-height", "letter-spacing", "word-spacing", "text-align", "white-space", "color",
+      "direction", "text-transform", "transform", "transform-origin", "writing-mode", "text-orientation",
+      "opacity", "visibility"
+    ];
+    const factorableProperties = [
+      "font-family", "font-size", "font-weight", "font-style", "font-variant", "font-stretch",
+      "line-height", "letter-spacing", "word-spacing", "text-align", "white-space", "color",
+      "direction", "text-transform", "writing-mode", "text-orientation"
+    ];
+    const layoutProperties = new Set(["position", "display", "left", "top", "width", "height", "z-index", "transform", "transform-origin", "opacity", "visibility"]);
+    const ignoredTags = new Set(["html", "head", "body", "script", "style", "meta", "link", "title", "br"]);
+    const sourceMarker = "data-zoning-source-id";
+    const roundCss = (value: number): string => `${Number(value.toFixed(3))}px`;
+    const hasText = (element: HTMLElement): boolean => Boolean(element.textContent?.replace(/\s+/g, " ").trim());
+    const measuredCandidates = Array.from(frameDocument.body.querySelectorAll<HTMLElement>("*"))
+      .map((element, index) => {
+        const style = frameWindow.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        const hasTransform = style.transform && style.transform !== "none";
+        const useComputedPosition = style.position === "absolute" && hasTransform && style.left !== "auto" && style.top !== "auto";
+        const styleValues = new Map<string, string>();
+        for (const property of visualProperties) styleValues.set(property, style.getPropertyValue(property));
+        styleValues.set("position", "absolute");
+        styleValues.set("left", useComputedPosition ? style.getPropertyValue("left") : roundCss(rect.left + frameWindow.scrollX));
+        styleValues.set("top", useComputedPosition ? style.getPropertyValue("top") : roundCss(rect.top + frameWindow.scrollY));
+        styleValues.set("width", hasTransform ? style.getPropertyValue("width") : roundCss(rect.width));
+        styleValues.set("height", hasTransform ? style.getPropertyValue("height") : roundCss(rect.height));
+        return {
+          key: `zoning-source-${index}`,
+          element,
+          style,
+          styleValues,
+          x: rect.left + frameWindow.scrollX,
+          y: rect.top + frameWindow.scrollY,
+          w: rect.width,
+          h: rect.height
+        };
+      })
+      .filter((candidate) => !ignoredTags.has(candidate.element.tagName.toLowerCase()) && hasText(candidate.element) && candidate.w > 0 && candidate.h > 0 && candidate.style.display !== "none" && candidate.style.visibility !== "hidden" && candidate.style.opacity !== "0");
+    const positionedCandidates = measuredCandidates.filter((candidate) => candidate.style.position === "absolute" || candidate.style.position === "fixed");
+    const candidatePool = positionedCandidates.length > 0 ? positionedCandidates : measuredCandidates;
+    const candidates = candidatePool.filter((candidate) => !candidatePool.some((other) => other !== candidate && candidate.element.contains(other.element)));
+    for (const candidate of candidates) candidate.element.setAttribute(sourceMarker, candidate.key);
+
+    const root = frameDocument.documentElement.cloneNode(true) as HTMLElement;
+    root.setAttribute("data-zoning-final", "true");
+    root.setAttribute("data-zoning-css-strategy", cssStrategy);
+    for (const candidate of candidates) candidate.element.removeAttribute(sourceMarker);
+
+    const cloneBySourceKey = new Map<string, HTMLElement>();
+    for (const element of Array.from(root.querySelectorAll<HTMLElement>(`[${sourceMarker}]`))) {
+      const key = element.getAttribute(sourceMarker);
+      if (key) cloneBySourceKey.set(key, element);
+      element.removeAttribute(sourceMarker);
+    }
+
+    const body = root.querySelector("body");
+    if (!body) return null;
+    const textContainer = root.querySelector<HTMLElement>("#TextContainer") ?? root.querySelector<HTMLElement>(".main") ?? body;
+    const namespace = root.namespaceURI || "http://www.w3.org/1999/xhtml";
+    const ownerDocument = frameDocument;
+    const claimedKeys = new Set<string>();
+    const archivePath = this.archiveManifest()?.pages[page.pageIndex]?.reviewPath ?? "";
+    const sourcePagePrefix = archivePath.match(/(?:^|\/)(page\d+)\.(?:xhtml|html|htm)$/i)?.[1]?.toLowerCase();
+    const semanticPagePrefix = sourcePagePrefix ?? `page${String(page.pageIndex + 1).padStart(4, "0")}`;
+
+    const styleElement = ownerDocument.createElementNS(namespace, "style");
+    styleElement.textContent = ".zoning-semantic-parent{position:absolute;margin:0!important;padding:0!important;border:0;overflow:visible;z-index:2}.zoning-semantic-content{position:absolute;display:block;overflow:visible}";
+    root.querySelector("head")?.appendChild(styleElement);
+    let movedElementCount = 0;
+
+    const commonStylesFor = (selected: Candidate[]): Map<string, string> => {
+      const common = new Map<string, string>();
+      if (cssStrategy !== "factor-common-css" || selected.length === 0) return common;
+      for (const property of factorableProperties) {
+        const firstValue = selected[0].styleValues.get(property) ?? "";
+        if (!firstValue) continue;
+        if (selected.every((candidate) => (candidate.styleValues.get(property) ?? "") === firstValue)) common.set(property, firstValue);
+      }
+      return common;
+    };
+
+    const applyStyles = (element: HTMLElement, styles: Map<string, string>, commonStyles: Map<string, string>): void => {
+      for (const property of visualProperties) {
+        if (commonStyles.has(property) && !layoutProperties.has(property)) continue;
+        const value = styles.get(property);
+        if (value) element.style.setProperty(property, value);
+      }
+    };
+
+    for (const [boxIndex, box] of this.normalizeBoxOrder(boxes).entries()) {
+      const selected = candidates.filter((candidate) => {
+        if (claimedKeys.has(candidate.key)) return false;
+        const centerX = candidate.x + candidate.w / 2;
+        const centerY = candidate.y + candidate.h / 2;
+        return centerX >= box.x && centerX <= box.x + box.w && centerY >= box.y && centerY <= box.y + box.h;
+      });
+      for (const candidate of selected) claimedKeys.add(candidate.key);
+      const commonStyles = commonStylesFor(selected);
+
+      const semantic = ownerDocument.createElementNS(namespace, box.tag) as HTMLElement;
+      const order = box.readingOrder ?? boxIndex + 1;
+      semantic.setAttribute("id", `${semanticPagePrefix}_para${order}`);
+      semantic.setAttribute("class", `zoning-semantic-parent ${semanticPagePrefix}-para${order}`);
+      semantic.setAttribute("data-box-id", box.id);
+      semantic.setAttribute("data-reading-order", String(order));
+      semantic.setAttribute("data-semantic-tag", box.tag);
+      semantic.setAttribute("style", `left:${box.x}px;top:${box.y}px`);
+      for (const [property, value] of commonStyles) semantic.style.setProperty(property, value);
+
+      const content = ownerDocument.createElementNS(namespace, "span");
+      content.setAttribute("class", "zoning-semantic-content");
+      content.setAttribute("style", `left:${-box.x}px;top:${-box.y}px;width:${page.pageWidth}px;height:${page.pageHeight}px`);
+      for (const candidate of selected) {
+        const clonedElement = cloneBySourceKey.get(candidate.key);
+        if (!clonedElement) continue;
+        const replacement = ownerDocument.createElementNS(namespace, "span") as HTMLElement;
+        for (const attribute of Array.from(clonedElement.attributes)) {
+          if (attribute.name === "style" || attribute.name === sourceMarker) continue;
+          if (cssStrategy === "factor-common-css" && attribute.name === "id") {
+            replacement.setAttribute("data-source-id", attribute.value);
+            continue;
+          }
+          if (cssStrategy === "factor-common-css" && attribute.name === "class") {
+            replacement.setAttribute("data-source-class", attribute.value);
+            continue;
+          }
+          replacement.setAttribute(attribute.name, attribute.value);
+        }
+        while (clonedElement.firstChild) replacement.appendChild(clonedElement.firstChild);
+        applyStyles(replacement, candidate.styleValues, commonStyles);
+        clonedElement.remove();
+        content.appendChild(replacement);
+        movedElementCount += 1;
+      }
+      if (!content.childNodes.length) continue;
+      semantic.appendChild(content);
+      textContainer.appendChild(semantic);
+    }
+
+    if (boxes.length > 0 && movedElementCount === 0) return null;
+
+    const serializer = new XMLSerializer();
+    return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html>\n${serializer.serializeToString(root)}`;
   }
 
   moveBoxOrder(boxId: string, delta: -1 | 1): void {

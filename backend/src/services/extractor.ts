@@ -1,6 +1,6 @@
 ﻿import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { ExtractionStatus, type ClassifierResult, type ExtractedFontAsset, type ExtractionProfile, type FontExtractionManifest, type PageResult, type RawSpan, type SemanticTag, type TextBlock } from "../types.js";
+import { ExtractionStatus, type ClassifierResult, type ExtractedFontAsset, type ExtractionProfile, type FontExtractionManifest, type ImportedPageManifest, type PageResult, type PdfPageBounds, type RawSpan, type SemanticTag, type TextBlock } from "../types.js";
 import { classifyBlocks } from "./classifier.js";
 import { jobStore, type StoredJobState } from "./jobStore.js";
 import { extractFontsWithPdfBox } from "./pdfboxFontService.js";
@@ -27,6 +27,8 @@ interface PageExtraction {
   pageIndex: number;
   pageWidth: number;
   pageHeight: number;
+  pdfPageBounds: PdfPageBounds;
+  renderDpi: number;
   scale: number;
   leftMarginPx: number;
   spans: ExtractorSpan[];
@@ -678,8 +680,18 @@ async function extractWithMuPdf(
       let structured: import("mupdf").StructuredText | null = null;
       try {
         const bounds = page.getBounds() as [number, number, number, number];
-        const pageWidth = Math.round((bounds[2] - bounds[0]) * scale);
-        const pageHeight = Math.round((bounds[3] - bounds[1]) * scale);
+        const widthPt = bounds[2] - bounds[0];
+        const heightPt = bounds[3] - bounds[1];
+        const pdfPageBounds: PdfPageBounds = {
+          x0: bounds[0],
+          y0: bounds[1],
+          x1: bounds[2],
+          y1: bounds[3],
+          widthPt,
+          heightPt
+        };
+        const pageWidth = Math.round(widthPt * scale);
+        const pageHeight = Math.round(heightPt * scale);
         pixmap = page.toPixmap(matrix, mupdf.ColorSpace.DeviceRGB, false, true);
         const imageBytes = new Uint8Array(pixmap.asPNG());
         structured = page.toStructuredText("preserve-whitespace,preserve-spans");
@@ -733,7 +745,7 @@ async function extractWithMuPdf(
             });
           }
         }
-        const extracted = { pageIndex, pageWidth, pageHeight, scale, leftMarginPx: detectLeftMarginPx(spans), spans, reviewWords, imageBytes };
+        const extracted = { pageIndex, pageWidth, pageHeight, pdfPageBounds, renderDpi: scale * 72, scale, leftMarginPx: detectLeftMarginPx(spans), spans, reviewWords, imageBytes };
         if (onPage) {
           await onPage(extracted, pageCount);
         } else {
@@ -909,6 +921,8 @@ function buildPageArtifacts(jobId: string, extracted: PageExtraction, profile: E
     confidence: validatePage(filtered, profile, extracted.pageWidth, extracted.pageHeight),
     pageWidth: extracted.pageWidth,
     pageHeight: extracted.pageHeight,
+    pdfPageBounds: extracted.pdfPageBounds,
+    renderDpi: extracted.renderDpi,
     leftMarginPx: extracted.leftMarginPx,
     reviewStatus: "unvisited"
   };
@@ -936,10 +950,23 @@ function buildPageArtifacts(jobId: string, extracted: PageExtraction, profile: E
   return { page, reviewHtml, reviewCssContent: reviewCss };
 }
 
+async function completeSourceManifest(job: StoredJobState, pages: ImportedPageManifest[]): Promise<void> {
+  const manifest = await jobStore.getSourceManifest(job.id);
+  if (!manifest) return;
+  await jobStore.saveSourceManifest(job.id, {
+    ...manifest,
+    layout: "fixed",
+    status: "ready",
+    pages,
+    updatedAt: new Date().toISOString()
+  });
+}
+
 export async function extractPDF(job: StoredJobState, profile: ExtractionProfile, dpi = 150, options: { enableOcrValidation?: boolean } = {}): Promise<void> {
   void options; // OCR disabled for now.
   await jobStore.markActive(job.id);
   await jobStore.updateJob(job.id, { status: ExtractionStatus.processing, processedPages: 0, dpi });
+  const sourcePages: ImportedPageManifest[] = [];
   try {
     let pdf2htmlExReady = false;
     if (isPdf2HtmlExEnabled()) {
@@ -968,9 +995,17 @@ export async function extractPDF(job: StoredJobState, profile: ExtractionProfile
           pageCount = totalPages;
           await jobStore.updateJob(job.id, { pageCount });
         }
-        await jobStore.savePdf2HtmlExPage(job.id, extracted.pageIndex, extracted.pageWidth, extracted.pageHeight, extracted.imageBytes);
+        await jobStore.savePdf2HtmlExPage(job.id, extracted.pageIndex, extracted.pageWidth, extracted.pageHeight, extracted.imageBytes, extracted.pdfPageBounds, extracted.renderDpi);
+        sourcePages.push({
+          pageIndex: extracted.pageIndex,
+          sourcePath: `source.pdf#page=${extracted.pageIndex + 1}`,
+          reviewPath: `pdf2htmlex/page-${extracted.pageIndex + 1}.html`,
+          width: extracted.pageWidth,
+          height: extracted.pageHeight
+        });
         await jobStore.updateJob(job.id, { processedPages: extracted.pageIndex + 1 });
       });
+      await completeSourceManifest(job, sourcePages);
       await jobStore.updateJob(job.id, { status: ExtractionStatus.done, pageCount });
       return;
     }
@@ -1000,14 +1035,31 @@ export async function extractPDF(job: StoredJobState, profile: ExtractionProfile
         },
         extracted.imageBytes
       );
+      sourcePages.push({
+        pageIndex: extracted.pageIndex,
+        sourcePath: `source.pdf#page=${extracted.pageIndex + 1}`,
+        reviewPath: `review/page-${extracted.pageIndex + 1}.html`,
+        width: extracted.pageWidth,
+        height: extracted.pageHeight
+      });
 
       await jobStore.updateJob(job.id, { processedPages: extracted.pageIndex + 1 });
     });
     // If pdf2htmlEX was enabled and succeeded, it is already available for the review UI
     // under /storage/jobs/<jobId>/pdf2htmlex/page-<n>.html.
     void pdf2htmlExReady;
+    await completeSourceManifest(job, sourcePages);
     await jobStore.updateJob(job.id, { status: ExtractionStatus.done, pageCount });
   } catch (error) {
+    const manifest = await jobStore.getSourceManifest(job.id);
+    if (manifest) {
+      await jobStore.saveSourceManifest(job.id, {
+        ...manifest,
+        status: "failed",
+        warnings: [...manifest.warnings, error instanceof Error ? error.message : "Extraction failed"],
+        updatedAt: new Date().toISOString()
+      });
+    }
     await jobStore.updateJob(job.id, {
       status: ExtractionStatus.failed,
       errorMessage: error instanceof Error ? error.message : "Extraction failed"

@@ -4,6 +4,7 @@ import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { jobStore } from "./jobStore.js";
 import { renderFinalBackgroundPng } from "./finalBackgroundService.js";
 import { latexToMathMl } from "./mathMlService.js";
+import { finalViewportDpi } from "../config/runtime.js";
 
 export type SemanticBoxTag = "p" | "h1" | "h2" | "h3" | "caption" | "table" | "img" | "equation";
 
@@ -100,6 +101,8 @@ const STYLE_OUTPUT_ORDER = [
   "line-height",
   "text-align"
 ];
+
+const PDF_POINTS_PER_INCH = 72;
 
 function boxesIntersect(a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }): boolean {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
@@ -236,6 +239,7 @@ function stripFontFaceRules(cssText: string): string {
 
 function stripSharedReviewRules(cssText: string): string {
   return cssText
+    .replace(/\n?\.page\s*\{[^}]*\}\s*/g, "\n")
     .replace(/\n?\.page__bg\s*\{[^}]*\}\s*/g, "\n")
     .replace(/\n?\.page__text\s*\{[^}]*\}\s*/g, "\n")
     .replace(/\n?\.page__word\s*\{[^}]*\}\s*/g, "\n")
@@ -356,6 +360,21 @@ function formatPx(value: number): string {
 
 function formatMetaNumber(value: number): string {
   return String(Number(value.toFixed(3)));
+}
+
+function formatScaleNumber(value: number): string {
+  return String(Number(value.toFixed(6)));
+}
+
+function detectPageLanguage(words: WordStyle[]): string {
+  const text = words.map((word) => word.text).join(" ");
+  if (/\p{Script=Devanagari}/u.test(text)) return "hi";
+  if (words.some((word) => /(?:chanakya|devlys|kruti)/i.test(word.fontFamily))) return "hi";
+  return "en";
+}
+
+function ensureMathMlNamespace(mathMl: string): string {
+  return mathMl.replace(/<math(?![^>]*\sxmlns=)/, '<math xmlns="http://www.w3.org/1998/Math/MathML"');
 }
 
 function wordInheritedStyles(word: WordStyle): CssDeclarations {
@@ -502,6 +521,8 @@ function createStyleClassRegistry(stored: StoredFinalStyleRegistry = emptyFinalS
 
 const FINAL_COMMON_BASE_CSS = `html, body { margin: 0; padding: 0; }
 .page { position: relative; overflow: hidden; }
+.page__pagebreak { position: absolute; width: 0; height: 0; overflow: hidden; }
+.page__canvas { position: absolute; left: 0; top: 0; overflow: hidden; transform-origin: top left; }
 .page__bg { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
 .page__text { position: absolute; inset: 0; z-index: 1; }
 .page__word { user-select: text; }
@@ -881,13 +902,28 @@ async function generateFinalPageFromBoxesUnlocked(jobId: string, pageIndex: numb
     mkdir(finalStyleDir, { recursive: true }),
     mkdir(styleRegistryDir, { recursive: true })
   ]);
-  const [html, css, page] = await Promise.all([
+  const [html, css, page, job] = await Promise.all([
     readFile(reviewHtmlPath, "utf8"),
     readFile(reviewCssPath, "utf8"),
-    jobStore.getPage(jobId, pageIndex)
+    jobStore.getPage(jobId, pageIndex),
+    jobStore.getJob(jobId)
   ]);
   const pageWidth = page?.pageWidth ?? 0;
   const pageHeight = page?.pageHeight ?? 0;
+  const sourceDpi = page?.renderDpi && page.renderDpi > 0
+    ? page.renderDpi
+    : job?.dpi && job.dpi > 0
+      ? job.dpi
+      : finalViewportDpi;
+  const pointBounds = page?.pdfPageBounds;
+  const viewportWidth = pointBounds?.widthPt && pointBounds.widthPt > 0
+    ? pointBounds.widthPt * finalViewportDpi / PDF_POINTS_PER_INCH
+    : pageWidth * finalViewportDpi / sourceDpi;
+  const viewportHeight = pointBounds?.heightPt && pointBounds.heightPt > 0
+    ? pointBounds.heightPt * finalViewportDpi / PDF_POINTS_PER_INCH
+    : pageHeight * finalViewportDpi / sourceDpi;
+  const viewportScaleX = pageWidth > 0 ? viewportWidth / pageWidth : 1;
+  const viewportScaleY = pageHeight > 0 ? viewportHeight / pageHeight : 1;
   let storedStyleRegistry = await readFinalStyleRegistry(styleRegistryPath);
   if (storedStyleRegistry.classes.length === 0 && storedStyleRegistry.fontFaces.length === 0) {
     storedStyleRegistry = await readFinalStyleRegistry(path.join(finalStyleDir, "common.registry.json"));
@@ -906,6 +942,7 @@ async function generateFinalPageFromBoxesUnlocked(jobId: string, pageIndex: numb
   const byIndex = new Map(words.map((w) => [w.index, w]));
 
   words.sort((a, b) => (a.y - b.y) || (a.x - b.x));
+  const pageLanguage = detectPageLanguage(words);
 
   const paraBlocks: Array<{ box: SemanticBox; wordIndices: number[] }> = orderedBoxes.map((box) => ({ box, wordIndices: [] }));
   for (const word of words) {
@@ -1141,7 +1178,8 @@ async function generateFinalPageFromBoxesUnlocked(jobId: string, pageIndex: numb
         const status = block.box.math?.status ?? "pending";
         const existingMathMl = block.box.math?.mathml?.trim() ?? "";
         const generatedMathMl = !existingMathMl && latex ? latexToMathMl(latex) : null;
-        const mathml = existingMathMl || generatedMathMl?.mathml || "";
+        const rawMathMl = existingMathMl || generatedMathMl?.mathml || "";
+        const mathml = rawMathMl ? ensureMathMlNamespace(rawMathMl) : "";
         const mathmlStatus = mathml ? "ok" : latex ? "failed" : "pending";
         const mathmlError = block.box.math?.mathmlError ?? generatedMathMl?.error ?? "";
         const latexAttr = latex ? ` data-latex="${escapeHtml(latex)}"` : "";
@@ -1153,39 +1191,52 @@ async function generateFinalPageFromBoxesUnlocked(jobId: string, pageIndex: numb
           ? ` data-source-font-size="${escapeHtml(String(renderStyle.fontSizePx))}" data-source-font-family="${escapeHtml(renderStyle.fontFamily)}" data-source-word-count="${escapeHtml(String(renderStyle.sourceWordCount))}"`
           : "";
         const className = ["page__crop", "math-zone", "equation-zone", mathml ? "math-zone--mathml" : "math-zone--crop", block.className].join(" ");
-        const cropImage = `<img class="math-crop-fallback" src="./images/crops/${escapeHtml(block.fileName)}" alt="Equation">`;
+        const cropImage = `<img class="math-crop-fallback" src="./images/crops/${escapeHtml(block.fileName)}" alt="Equation" />`;
         const mathMlHtml = mathml ? `<span class="mathml-render">${mathml}</span>` : "";
         return `<figure id="${block.elementId}" class="${className}" data-box-id="${escapeHtml(block.box.id)}" data-math-status="${escapeHtml(status)}"${mathmlAttr}${latexAttr}${styleAttrs}${errorAttr}${mathmlErrorAttr}>${mathMlHtml}${cropImage}${latex ? `<figcaption class="math-latex">${escapeHtml(latex)}</figcaption>` : ""}</figure>`;
       }
       if (block.box.tag === "table") {
         const tableMode = block.box.table?.outputMode ?? "crop";
         const grid = block.box.table?.grid ? ` data-grid="${escapeHtml(JSON.stringify(block.box.table.grid))}"` : "";
-        return `<img id="${block.elementId}" class="page__crop page__table-crop ${block.className}" src="./images/crops/${escapeHtml(block.fileName)}" alt="Table" data-box-id="${escapeHtml(block.box.id)}" data-table-mode="${escapeHtml(tableMode)}"${grid}>`;
+        return `<img id="${block.elementId}" class="page__crop page__table-crop ${block.className}" src="./images/crops/${escapeHtml(block.fileName)}" alt="Table" data-box-id="${escapeHtml(block.box.id)}" data-table-mode="${escapeHtml(tableMode)}"${grid} />`;
       }
-      return `<img id="${block.elementId}" class="page__crop ${block.className}" src="./images/crops/${escapeHtml(block.fileName)}" alt="">`;
+      return `<img id="${block.elementId}" class="page__crop ${block.className}" src="./images/crops/${escapeHtml(block.fileName)}" alt="" />`;
     })
     .join("\n");
 
-  const finalHtml = `<!doctype html>
-<html lang="en">
+  const finalHtml = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${pageLanguage}" lang="${pageLanguage}">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="pdf-page-number" content="${pageNumber}">
-<meta name="pdf-page-width" content="${formatMetaNumber(pageWidth)}">
-<meta name="pdf-page-height" content="${formatMetaNumber(pageHeight)}">
-<meta name="pdf-page-scale" content="1">
-<link rel="stylesheet" href="./style/common.css">
-<link rel="stylesheet" href="./style/page-${pageNumber}.css">
+<meta content="width=${formatMetaNumber(viewportWidth)}, height=${formatMetaNumber(viewportHeight)}" name="viewport" />
+<title>Page ${pageNumber}</title>
+<meta charset="utf-8" />
+<meta name="rendition:layout" content="pre-paginated" />
+<meta name="pdf-page-number" content="${pageNumber}" />
+<meta name="pdf-page-width" content="${formatMetaNumber(viewportWidth)}" />
+<meta name="pdf-page-height" content="${formatMetaNumber(viewportHeight)}" />
+<meta name="pdf-page-scale-x" content="${formatScaleNumber(viewportScaleX)}" />
+<meta name="pdf-page-scale-y" content="${formatScaleNumber(viewportScaleY)}" />
+<meta name="pdf-page-width-pt" content="${formatMetaNumber(pointBounds?.widthPt ?? viewportWidth * PDF_POINTS_PER_INCH / finalViewportDpi)}" />
+<meta name="pdf-page-height-pt" content="${formatMetaNumber(pointBounds?.heightPt ?? viewportHeight * PDF_POINTS_PER_INCH / finalViewportDpi)}" />
+<meta name="source-page-width" content="${formatMetaNumber(pageWidth)}" />
+<meta name="source-page-height" content="${formatMetaNumber(pageHeight)}" />
+<meta name="source-page-dpi" content="${formatMetaNumber(sourceDpi)}" />
+<meta name="viewport-coordinate-dpi" content="${formatMetaNumber(finalViewportDpi)}" />
+<link rel="stylesheet" type="text/css" href="./style/common.css" />
+<link rel="stylesheet" type="text/css" href="./style/page-${pageNumber}.css" />
 </head>
 <body>
-<div class="page" data-page-number="${pageNumber}" data-page-width="${formatMetaNumber(pageWidth)}" data-page-height="${formatMetaNumber(pageHeight)}" data-page-scale="1">
-<img class="page__bg" src="./images/page-${pageNumber}.png" alt="">
+<div class="page" data-page-number="${pageNumber}" data-page-width="${formatMetaNumber(viewportWidth)}" data-page-height="${formatMetaNumber(viewportHeight)}" data-page-scale-x="${formatScaleNumber(viewportScaleX)}" data-page-scale-y="${formatScaleNumber(viewportScaleY)}" data-source-page-width="${formatMetaNumber(pageWidth)}" data-source-page-height="${formatMetaNumber(pageHeight)}">
+<span class="page__pagebreak" epub:type="pagebreak" id="page_${pageNumber}" title="${pageNumber}"></span>
+<div class="page__canvas">
+<img class="page__bg" src="./images/page-${pageNumber}.png" alt="" />
 <div class="page__text">
 ${semanticElements}
 ${tableElements}
 ${leftoverWords}
 ${imageElements}
+</div>
 </div>
 </div>
 </body>
@@ -1259,7 +1310,8 @@ ${imageElements}
     .join("\n");
 
   const pageSourceCss = stripSharedReviewRules(stripFontFaceRules(stripPageWordRules(pageNumber, css)));
-  const finalCss = `${pageSourceCss}\n\n${paraCssBlocks.join("\n")}\n\n${lineCssBlocks.join("\n")}\n\n${tableCssBlocks.join("\n")}\n\n${semanticWordRules.join("\n")}\n\n${imageCssBlocks.join("\n")}\n\n${wordRules}`.trim();
+  const viewportCss = `.page { width: ${formatPx(viewportWidth)}; height: ${formatPx(viewportHeight)}; }\n.page__canvas { width: ${formatPx(pageWidth)}; height: ${formatPx(pageHeight)}; transform: scale(${formatScaleNumber(viewportScaleX)}, ${formatScaleNumber(viewportScaleY)}); }`;
+  const finalCss = `${viewportCss}\n\n${pageSourceCss}\n\n${paraCssBlocks.join("\n")}\n\n${lineCssBlocks.join("\n")}\n\n${tableCssBlocks.join("\n")}\n\n${semanticWordRules.join("\n")}\n\n${imageCssBlocks.join("\n")}\n\n${wordRules}`.trim();
   const fontFaces = mergeFontFaces(storedStyleRegistry.fontFaces, extractFontFaceRules(css));
   const finalStyleRegistry = styleClassRegistry.snapshot(fontFaces);
   const finalCommonCss = buildFinalCommonCss(fontFaces, styleClassRegistry.rules());
@@ -1278,6 +1330,7 @@ ${imageElements}
   }
 
   await Promise.all([
+    writeFinalTextFile(path.join(finalDir, `page-${pageNumber}.xhtml`), finalHtml),
     writeFinalTextFile(path.join(finalDir, `page-${pageNumber}.html`), finalHtml),
     writeFinalTextFile(path.join(finalStyleDir, `page-${pageNumber}.css`), finalCss),
     writeFinalTextFile(path.join(finalStyleDir, "common.css"), finalCommonCss),

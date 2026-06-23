@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { type DraftPageState, type FixDelta, type PageVisit, type SpanCorrection } from "../types.js";
+import { type ArchiveZoningCssStrategy, type DraftPageState, type FixDelta, type PageVisit, type SpanCorrection } from "../types.js";
 import { buildEditSummary, saveFix, saveVisit } from "../services/fixStore.js";
 import { jobStore } from "../services/jobStore.js";
 import { loadProfile } from "../services/profileStore.js";
@@ -9,6 +9,7 @@ import { recognizeEquationCrop } from "../services/mathOcrService.js";
 import { latexToMathMl } from "../services/mathMlService.js";
 import { type SemanticBox, generateFinalPageFromBoxes, semanticBoxCropFileName, writeSemanticBoxCrop } from "../services/semanticTagService.js";
 import { getSpanCorrections, saveSpanCorrection } from "../services/spanCorrectionService.js";
+import { writeArchiveFinalPage } from "../services/archiveFinalPageService.js";
 import path from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 
@@ -22,6 +23,10 @@ function canonicalBoxes(boxes: SemanticBox[]): string {
       return result;
     }, {});
   });
+}
+
+function normalizeArchiveCssStrategy(value: unknown): ArchiveZoningCssStrategy {
+  return value === "preserve-child-css" ? "preserve-child-css" : "factor-common-css";
 }
 
 async function recognizeEquationBoxes(jobId: string, pageIndex: number, boxes: SemanticBox[]): Promise<void> {
@@ -92,8 +97,11 @@ fixesRouter.get("/boxes", async (req, res) => {
       res.json({ boxes: [] });
       return;
     }
-    const payload = JSON.parse(content) as { boxes?: SemanticBox[] };
-    res.json({ boxes: Array.isArray(payload.boxes) ? payload.boxes : [] });
+    const payload = JSON.parse(content) as { boxes?: SemanticBox[]; archiveFinalCssStrategy?: ArchiveZoningCssStrategy };
+    res.json({
+      boxes: Array.isArray(payload.boxes) ? payload.boxes : [],
+      archiveFinalCssStrategy: normalizeArchiveCssStrategy(payload.archiveFinalCssStrategy)
+    });
   } catch (error) {
     res.status(500).json({ message: error instanceof Error ? error.message : "Unable to load boxes" });
   }
@@ -105,25 +113,39 @@ fixesRouter.put("/boxes", async (req, res) => {
     const jobId = params.id;
     const pageIndex = Number(params.pageIndex);
     const pageNumber = pageIndex + 1;
-    const body = req.body as { boxes?: SemanticBox[]; recognizeEquations?: boolean };
+    const body = req.body as { boxes?: SemanticBox[]; recognizeEquations?: boolean; archiveFinalHtml?: string; archiveFinalCssStrategy?: ArchiveZoningCssStrategy };
     const boxes = Array.isArray(body.boxes) ? body.boxes : [];
+    const job = await jobStore.getJob(jobId);
+    if (!job) {
+      res.status(404).json({ message: "Job not found" });
+      return;
+    }
+    const isArchiveSource = job.sourceType === "epub" || job.sourceType === "html-zip";
     const finalDir = jobStore.getFinalDir(jobId);
     const boxesPath = path.join(finalDir, `page-${pageNumber}.boxes.json`);
     const storedContent = await readFile(boxesPath, "utf8").catch(() => "");
-    const storedPayload = storedContent ? JSON.parse(storedContent) as { boxes?: SemanticBox[] } : { boxes: [] };
+    const storedPayload = storedContent ? JSON.parse(storedContent) as { boxes?: SemanticBox[]; archiveFinalCssStrategy?: ArchiveZoningCssStrategy } : { boxes: [] };
     const storedBoxes = Array.isArray(storedPayload.boxes) ? storedPayload.boxes : [];
-    if (canonicalBoxes(storedBoxes) === canonicalBoxes(boxes)) {
-      res.json({ ok: true, saved: storedBoxes.length, boxes: storedBoxes, unchanged: true });
+    const archiveFinalCssStrategy = normalizeArchiveCssStrategy(body.archiveFinalCssStrategy);
+    const storedArchiveFinalCssStrategy = normalizeArchiveCssStrategy(storedPayload.archiveFinalCssStrategy);
+    if (canonicalBoxes(storedBoxes) === canonicalBoxes(boxes) && (!isArchiveSource || archiveFinalCssStrategy === storedArchiveFinalCssStrategy)) {
+      const finalPagePath = isArchiveSource && typeof body.archiveFinalHtml === "string"
+        ? await writeArchiveFinalPage(jobId, pageIndex, body.archiveFinalHtml)
+        : undefined;
+      res.json({ ok: true, saved: storedBoxes.length, boxes: storedBoxes, unchanged: true, finalPagePath, archiveFinalCssStrategy: storedArchiveFinalCssStrategy });
       return;
     }
 
     await mkdir(finalDir, { recursive: true });
-    if (body.recognizeEquations) {
+    if (body.recognizeEquations && !isArchiveSource) {
       await recognizeEquationBoxes(jobId, pageIndex, boxes);
     }
-    await generateFinalPageFromBoxes(jobId, pageIndex, boxes);
-    await writeFile(boxesPath, JSON.stringify({ boxes }, null, 2), "utf8");
-    res.json({ ok: true, saved: boxes.length, boxes, unchanged: false });
+    if (!isArchiveSource) await generateFinalPageFromBoxes(jobId, pageIndex, boxes);
+    const finalPagePath = isArchiveSource && typeof body.archiveFinalHtml === "string"
+      ? await writeArchiveFinalPage(jobId, pageIndex, body.archiveFinalHtml)
+      : undefined;
+    await writeFile(boxesPath, JSON.stringify(isArchiveSource ? { boxes, archiveFinalCssStrategy } : { boxes }, null, 2), "utf8");
+    res.json({ ok: true, saved: boxes.length, boxes, unchanged: false, finalPagePath, archiveFinalCssStrategy });
   } catch (error) {
     res.status(500).json({ message: error instanceof Error ? error.message : "Unable to save boxes" });
   }

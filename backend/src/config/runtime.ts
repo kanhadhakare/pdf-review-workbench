@@ -41,6 +41,7 @@ export const serverPort = Number.parseInt(process.env.PORT ?? "3000", 10) || 300
 export const extractionPageConcurrency = Math.max(1, Number.parseInt(process.env.EXTRACT_PAGE_CONCURRENCY ?? "1", 10) || 1);
 export const extractionMaxDpi = Math.max(72, Number.parseInt(process.env.EXTRACT_MAX_DPI ?? "150", 10) || 150);
 export const finalOutputDpi = Math.max(72, Number.parseInt(process.env.FINAL_OUTPUT_DPI ?? "200", 10) || 200);
+export const finalViewportDpi = Math.max(72, Number.parseFloat(process.env.FINAL_VIEWPORT_DPI ?? "96") || 96);
 
 export function getCorsOrigins(): string[] {
   const configured = splitCommaList(process.env.CORS_ORIGIN);

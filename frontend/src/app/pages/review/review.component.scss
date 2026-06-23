@@ -123,6 +123,71 @@
   padding: 8px 12px;
 }
 
+.toolbar-download {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.82rem;
+  text-decoration: none;
+}
+
+.toolbar-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+}
+
+.toolbar-select select {
+  max-width: 260px;
+}
+
+.archive-zoning-notice {
+  position: fixed;
+  top: 78px;
+  right: 22px;
+  z-index: 920;
+  width: min(420px, calc(100vw - 44px));
+  pointer-events: none;
+}
+
+.archive-zoning-notice__card {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid rgba(127, 219, 255, 0.36);
+  border-radius: 14px;
+  background: rgba(14, 20, 32, 0.94);
+  color: var(--text);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(10px);
+  pointer-events: auto;
+}
+
+.archive-zoning-notice__card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.archive-zoning-notice__card header button {
+  min-width: 32px;
+  padding: 4px 8px;
+}
+
+.archive-zoning-notice__card p {
+  padding: 0;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.archive-zoning-notice__card > button {
+  justify-self: start;
+}
+
 .review-popup {
   position: fixed;
   inset: 0;

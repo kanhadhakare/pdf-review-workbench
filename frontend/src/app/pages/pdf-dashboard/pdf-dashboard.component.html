@@ -1,28 +1,37 @@
 <main class="pdf-dashboard">
   <header class="pdf-dashboard__header">
-    <h1>Uploaded PDFs</h1>
-    <a routerLink="/">Upload new</a>
+    <div><p class="pdf-dashboard__eyebrow">Workspace</p><h1>Projects</h1><p class="pdf-dashboard__subtitle">Continue a review or start from a new source.</p></div>
+    <div class="pdf-dashboard__header-actions"><a class="header-link" routerLink="/">New project</a></div>
   </header>
 
   <p class="error" *ngIf="error()">{{ error() }}</p>
 
-  <section class="pdf-dashboard__grid" *ngIf="items().length; else empty">
-    <article *ngFor="let item of items()" class="pdf-card">
-      <a class="pdf-card__open" [routerLink]="['/review', item.job.id]">
+  <section class="project-summary">
+    <button type="button" [class.is-active]="filter() === 'all'" (click)="filter.set('all')"><strong>{{ items().length }}</strong><span>All projects</span></button>
+    <button type="button" [class.is-active]="filter() === 'pdf'" (click)="filter.set('pdf')"><strong>{{ pdfCount() }}</strong><span>PDF reviews</span></button>
+    <button type="button" [class.is-active]="filter() === 'archive'" (click)="filter.set('archive')"><strong>{{ archiveCount() }}</strong><span>Archive imports</span></button>
+  </section>
+
+  <section class="pdf-dashboard__grid" *ngIf="filteredItems().length; else empty">
+    <article *ngFor="let item of filteredItems()" class="pdf-card">
+      <a class="pdf-card__open" [routerLink]="openRoute(item)">
         <div class="pdf-card__icon" *ngIf="iconUrl(item) as icon; else placeholder">
           <img [src]="icon" alt="">
         </div>
         <ng-template #placeholder>
-          <div class="pdf-card__placeholder">PDF</div>
+          <div class="pdf-card__placeholder">{{ sourceLabel(item) }}</div>
         </ng-template>
         <div class="pdf-card__meta">
+          <span class="pdf-card__badge">{{ sourceLabel(item) }}</span>
           <strong class="pdf-card__name">{{ item.job.originalFileName }}</strong>
           <span class="pdf-card__detail">Status: {{ item.job.status }} | Pages: {{ item.job.pageCount }}</span>
-          <span class="pdf-card__detail">Edits: {{ item.editSummary.totalEdits }} | Draft pages: {{ item.draftPageIndices.length }}</span>
+          <span class="pdf-card__detail" *ngIf="!isArchive(item)">Edits: {{ item.editSummary.totalEdits }} | Draft pages: {{ item.draftPageIndices.length }}</span>
         </div>
       </a>
       <div class="pdf-card__actions">
-        <a class="pdf-card__action" [href]="finalZipUrl(item)">Download final ZIP</a>
+        <a class="pdf-card__action pdf-card__action--primary" [routerLink]="openRoute(item)">{{ openLabel(item) }}</a>
+        <a *ngIf="canDownloadBuilds(item)" class="pdf-card__action" [href]="reviewZipUrl(item)">Download review ZIP</a>
+        <a *ngIf="canDownloadBuilds(item)" class="pdf-card__action" [href]="finalZipUrl(item)">Download final ZIP</a>
         <button type="button" class="pdf-card__action pdf-card__action--danger" (click)="deleteBook(item)" [disabled]="deletingJobId() === item.job.id">
           {{ deletingJobId() === item.job.id ? 'Deleting...' : 'Delete from server' }}
         </button>
@@ -31,6 +40,6 @@
   </section>
 
   <ng-template #empty>
-    <p class="pdf-dashboard__empty">No PDFs uploaded yet.</p>
+    <p class="pdf-dashboard__empty">No books uploaded yet.</p>
   </ng-template>
 </main>

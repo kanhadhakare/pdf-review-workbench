@@ -1,28 +1,42 @@
 .pdf-dashboard {
-  padding: 18px;
+  width: min(1180px, calc(100% - 40px));
+  margin: 0 auto;
+  padding: 40px 0 64px;
   display: grid;
-  gap: 14px;
+  gap: 24px;
 }
 
 .pdf-dashboard__header {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
 }
 
+.pdf-dashboard__eyebrow { margin: 0 0 7px; color: var(--accent); font: 600 11px/1 var(--font-mono); letter-spacing: .14em; text-transform: uppercase; }
+.pdf-dashboard__header h1 { margin: 0; font-size: 2.4rem; letter-spacing: -.04em; }
+.pdf-dashboard__subtitle { margin: 8px 0 0; color: var(--text-dim); }
+.pdf-dashboard__header-actions { display: flex; gap: 10px; }
+.header-link { padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); text-decoration: none; background: var(--surface); }
+.project-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.project-summary button { display: grid; gap: 4px; padding: 16px 18px; border-radius: 10px; text-align: left; background: rgba(255,255,255,.025); }
+.project-summary button.is-active { border-color: rgba(74,144,226,.6); background: rgba(74,144,226,.09); }
+.project-summary strong { font-size: 1.35rem; }
+.project-summary span { color: var(--text-dim); font-size: .82rem; }
+
 .pdf-dashboard__grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 12px;
+  gap: 16px;
 }
 
 .pdf-card {
   display: grid;
   gap: 10px;
-  padding: 12px;
+  padding: 16px;
   border: 1px solid var(--border);
   background: var(--surface);
+  border-radius: 12px;
 }
 
 .pdf-card:hover {
@@ -60,8 +74,11 @@
 }
 
 .pdf-card__name {
-  font-size: 14px;
+  font-size: 15px;
+  line-height: 1.35;
 }
+
+.pdf-card__badge { width: fit-content; padding: 3px 7px; border-radius: 999px; color: #9cc9fb; background: rgba(74,144,226,.13); font: 600 10px/1.3 var(--font-mono); }
 
 .pdf-card__detail {
   font-size: 12px;
@@ -82,7 +99,10 @@
   padding: 7px 10px;
   font-size: 12px;
   text-decoration: none;
+  border-radius: 6px;
 }
+
+.pdf-card__action--primary { color: #dcecff; border-color: rgba(74,144,226,.42); background: rgba(74,144,226,.12); }
 
 .pdf-card__action--danger {
   color: #ffb4aa;
@@ -98,3 +118,5 @@
 .pdf-dashboard__empty {
   color: var(--text-dim);
 }
+
+@media (max-width: 700px) { .pdf-dashboard { width: min(100% - 28px, 1180px); padding-top: 24px; } .pdf-dashboard__header { align-items: flex-start; flex-direction: column; } .project-summary { grid-template-columns: 1fr; } .pdf-card__actions { padding-left: 0; } }

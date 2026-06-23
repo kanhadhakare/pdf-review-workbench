@@ -1,6 +1,6 @@
 import { HttpClient } from "@angular/common/http";
 import { Injectable, inject } from "@angular/core";
-import { type DraftPageState, type ExtractionProfile, type FixDelta, type SemanticBox, type SpanCorrection } from "../types";
+import { type ArchiveZoningCssStrategy, type DraftPageState, type ExtractionProfile, type FixDelta, type SemanticBox, type SpanCorrection } from "../types";
 import { Observable } from "rxjs";
 
 @Injectable({ providedIn: "root" })
@@ -23,12 +23,22 @@ export class FixService {
     return this.http.put<{ ok: true; corrections: SpanCorrection[]; affectedPages: number[] }>(`/api/jobs/${jobId}/pages/${pageIndex}/span-corrections`, { correction });
   }
 
-  getBoxes(jobId: string, pageIndex: number): Observable<{ boxes: SemanticBox[] }> {
-    return this.http.get<{ boxes: SemanticBox[] }>(`/api/jobs/${jobId}/pages/${pageIndex}/boxes`);
+  getBoxes(jobId: string, pageIndex: number): Observable<{ boxes: SemanticBox[]; archiveFinalCssStrategy?: ArchiveZoningCssStrategy }> {
+    return this.http.get<{ boxes: SemanticBox[]; archiveFinalCssStrategy?: ArchiveZoningCssStrategy }>(`/api/jobs/${jobId}/pages/${pageIndex}/boxes`);
   }
 
-  saveBoxes(jobId: string, pageIndex: number, boxes: SemanticBox[], recognizeEquations = false): Observable<{ ok: true; saved: number; boxes: SemanticBox[]; unchanged?: boolean }> {
-    return this.http.put<{ ok: true; saved: number; boxes: SemanticBox[]; unchanged?: boolean }>(`/api/jobs/${jobId}/pages/${pageIndex}/boxes`, { boxes, recognizeEquations });
+  saveBoxes(
+    jobId: string,
+    pageIndex: number,
+    boxes: SemanticBox[],
+    recognizeEquations = false,
+    archiveFinalHtml?: string,
+    archiveFinalCssStrategy?: ArchiveZoningCssStrategy
+  ): Observable<{ ok: true; saved: number; boxes: SemanticBox[]; unchanged?: boolean; finalPagePath?: string; archiveFinalCssStrategy?: ArchiveZoningCssStrategy }> {
+    return this.http.put<{ ok: true; saved: number; boxes: SemanticBox[]; unchanged?: boolean; finalPagePath?: string; archiveFinalCssStrategy?: ArchiveZoningCssStrategy }>(
+      `/api/jobs/${jobId}/pages/${pageIndex}/boxes`,
+      { boxes, recognizeEquations, archiveFinalHtml, archiveFinalCssStrategy }
+    );
   }
 
   recognizeEquation(jobId: string, pageIndex: number, boxId: string, boxes: SemanticBox[]): Observable<{ box: SemanticBox; result: { ok: boolean; status: "ok" | "unavailable" | "failed"; latex?: string; error?: string; mathml?: string; mathmlStatus?: "ok" | "failed"; mathmlError?: string }; cropUrl?: string }> {

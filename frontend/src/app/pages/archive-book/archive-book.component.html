@@ -1,0 +1,29 @@
+<main class="pdf-dashboard archive-book">
+  <header class="pdf-dashboard__header">
+    <div><p class="archive-book__eyebrow">Imported XHTML Source</p><h1>{{ manifest()?.originalFileName ?? 'Archive book' }}</h1></div>
+    <div class="archive-book__nav"><a routerLink="/upload-archive">Upload archive</a><a routerLink="/dashboard">Dashboard</a></div>
+  </header>
+  <p class="error" *ngIf="error()">{{ error() }}</p>
+  <ng-container *ngIf="manifest() as book">
+    <section class="archive-summary">
+      <span>Type: {{ book.sourceType === 'epub' ? 'EPUB' : 'XHTML/HTML ZIP' }}</span><span>Layout: {{ book.layout }}</span><span>Pages: {{ book.pages.length }}</span><span>Assets: {{ book.sharedAssets.length }}</span>
+      <a *ngIf="book.unicodeReportPath" [href]="unicodeReportUrl()" target="_blank" rel="noopener">Unicode report</a>
+    </section>
+    <section class="saved-config" *ngIf="book.importOptions as options">
+      <div><span>Project goal</span><strong>{{ options.purpose === 'zoning' ? 'Prepare for zoning' : 'Inspect package' }}</strong></div>
+      <div><span>Page discovery</span><strong>{{ options.pageDiscovery }}</strong></div>
+      <div><span>Language</span><strong>{{ options.language }}</strong></div>
+      <div><span>Direction</span><strong>{{ options.readingDirection }}</strong></div>
+      <div><span>Text</span><strong>{{ options.textHandling }}</strong></div>
+      <div *ngIf="options.unicode"><span>Normalization</span><strong>{{ options.unicode.normalization }}</strong></div>
+      <div *ngIf="options.unicode"><span>Mojibake</span><strong>{{ options.unicode.mojibakeRepair }}</strong></div>
+      <div *ngIf="book.reviewRoot"><span>Review root</span><strong>{{ book.reviewRoot }}</strong></div>
+    </section>
+    <p class="archive-warning" *ngFor="let warning of book.warnings">{{ warning }}</p>
+    <section class="archive-pages">
+      <a *ngFor="let page of book.pages" class="archive-page" [routerLink]="['/review', jobId]" [queryParams]="{ page: page.pageIndex + 1 }">
+        <strong>Page {{ page.pageIndex + 1 }}</strong><span>{{ page.title || page.sourcePath }}</span><span *ngIf="page.width && page.height">{{ page.width }} × {{ page.height }}</span>
+      </a>
+    </section>
+  </ng-container>
+</main>

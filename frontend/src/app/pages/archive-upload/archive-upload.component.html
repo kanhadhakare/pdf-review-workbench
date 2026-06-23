@@ -1,0 +1,67 @@
+<main class="upload-page archive-upload-page">
+  <nav class="upload-nav"><a routerLink="/">← Workflows</a><a routerLink="/dashboard">Projects</a></nav>
+  <section class="panel">
+    <div class="panel__hero">
+      <p class="eyebrow">Existing book workflow</p>
+      <h1>Import XHTML Book</h1>
+      <p class="subtitle">Import pages produced by another tool. Your source package remains unchanged and all later work happens in an isolated copy.</p>
+    </div>
+
+    <div class="drop-zone archive-drop-zone">
+      <div class="drop-zone__icon">ZIP</div>
+      <div class="drop-zone__copy">
+        <strong>{{ selectedFile()?.name ?? 'Choose EPUB or XHTML ZIP' }}</strong>
+        <p>Maximum compressed size: 250 MB. Encrypted archives, symbolic links and unsafe paths are rejected.</p>
+      </div>
+      <input type="file" accept=".zip,.epub,application/zip,application/epub+zip" (change)="onFileSelected($event)">
+    </div>
+
+    <div class="archive-notes">
+      <strong>This step imports, validates and optionally prepares text</strong>
+      <span>Preserve mode is non-destructive. Cleanup modes create a separate review copy for zoning while keeping the original extracted source intact.</span>
+    </div>
+
+    <section class="import-config" aria-labelledby="import-config-title">
+      <div class="import-config__heading"><span>2</span><div><h2 id="import-config-title">Configure this import</h2><p>These settings are saved with the project and can be reviewed later.</p></div></div>
+
+      <fieldset class="purpose-options">
+        <legend>What do you want to do?</legend>
+        <label [class.is-selected]="purpose() === 'zoning'"><input type="radio" name="purpose" value="zoning" [ngModel]="purpose()" (ngModelChange)="purpose.set($event)"><span><strong>Prepare for zoning</strong><small>Import pages in reading order for semantic review.</small></span></label>
+        <label [class.is-selected]="purpose() === 'inspection'"><input type="radio" name="purpose" value="inspection" [ngModel]="purpose()" (ngModelChange)="purpose.set($event)"><span><strong>Inspect package only</strong><small>Validate pages, assets and viewport metadata.</small></span></label>
+      </fieldset>
+
+      <div class="config-grid">
+        <label><span>Page discovery</span><select [ngModel]="pageDiscovery()" (ngModelChange)="pageDiscovery.set($event)"><option value="auto">Automatic (recommended)</option><option value="spine">EPUB spine order</option><option value="all-xhtml">All XHTML/HTML files</option></select></label>
+        <label><span>Layout</span><select [ngModel]="layoutMode()" (ngModelChange)="layoutMode.set($event)"><option value="auto">Detect automatically</option><option value="fixed">Fixed layout</option><option value="reflowable">Reflowable</option></select></label>
+        <label><span>Language</span><select [ngModel]="languageMode()" (ngModelChange)="languageMode.set($event)"><option value="auto">Detect automatically</option><option value="manual">Set language tag</option></select></label>
+        <label *ngIf="languageMode() === 'manual'"><span>BCP-47 language tag</span><input type="text" [ngModel]="language()" (ngModelChange)="language.set($event)" placeholder="hi, en, ar-SA"></label>
+        <label><span>Reading direction</span><select [ngModel]="readingDirection()" (ngModelChange)="readingDirection.set($event)"><option value="auto">Detect automatically</option><option value="ltr">Left to right</option><option value="rtl">Right to left</option></select></label>
+        <label><span>Text handling</span><select [ngModel]="textHandling()" (ngModelChange)="textHandling.set($event)"><option value="preserve">Preserve source text</option><option value="audit">Audit only, no changes</option><option value="safe-cleanup">Create cleaned review copy</option><option value="advanced-repair">Advanced repair copy</option></select><small>Use cleanup only when source text or metadata needs fixing before zoning.</small></label>
+      </div>
+
+      <section class="unicode-config" *ngIf="textHandling() !== 'preserve'">
+        <div class="unicode-config__heading">
+          <strong>Unicode cleanup options</strong>
+          <span>{{ textHandling() === 'audit' ? 'Audit reports what would change without writing files.' : 'These changes are applied only to the review copy used for zoning.' }}</span>
+        </div>
+        <div class="config-grid">
+          <label><span>Normalization</span><select [ngModel]="unicodeNormalization()" (ngModelChange)="unicodeNormalization.set($event)"><option value="nfc">NFC (recommended)</option><option value="none">None</option><option value="nfkc">NFKC (risky for symbols)</option></select></label>
+          <label><span>Mojibake repair</span><select [ngModel]="mojibakeRepair()" (ngModelChange)="mojibakeRepair.set($event)"><option value="off">Off</option><option value="high-confidence">High-confidence only</option></select><small>Use for text like à¤... caused by UTF-8 being read as Latin-1.</small></label>
+          <label class="checkbox-label"><input type="checkbox" [ngModel]="applyLanguageMetadata()" (ngModelChange)="applyLanguageMetadata.set($event)"><span>Add lang/xml:lang and dir metadata</span></label>
+          <label><span>Indic joiners</span><select [ngModel]="joinerPolicy()" (ngModelChange)="joinerPolicy.set($event)"><option value="preserve">Preserve ZWJ/ZWNJ</option><option value="remove-redundant-indic">Remove redundant Devanagari joiners</option></select><small>Use only when words contain visible joiner artifacts like पाठ्‍य.</small></label>
+        </div>
+      </section>
+    </section>
+
+    <div class="panel__actions">
+      <a class="secondary" routerLink="/">Change workflow</a>
+      <button type="button" class="primary" (click)="submit()" [disabled]="!selectedFile() || busy() || (languageMode() === 'manual' && !language().trim())">{{ busy() ? 'Importing...' : 'Import with settings' }}</button>
+    </div>
+
+    <div class="status-card">
+      <div class="status-row"><span>Status</span><strong>{{ status() }}</strong></div>
+      <div class="status-bar"><span class="status-bar__fill" [class.is-busy]="busy()"></span></div>
+    </div>
+    <p class="error" *ngIf="error()">{{ error() }}</p>
+  </section>
+</main>

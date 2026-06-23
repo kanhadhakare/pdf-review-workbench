@@ -20,7 +20,7 @@
       <a routerLink="/">Back</a>
       <strong>Page {{ pageIndex() + 1 }} of {{ pageCount() }}</strong>
       <button type="button" (click)="showStatsPopup.set(true)" [disabled]="!!blockingMessage()">Page Info</button>
-      <button type="button" (click)="openCorrectionPopup()" [disabled]="!!blockingMessage()">Span Correction</button>
+      <button *ngIf="!isArchiveSource()" type="button" (click)="openCorrectionPopup()" [disabled]="!!blockingMessage()">Span Correction</button>
       <label class="mode-toggle">
         <input type="checkbox" [checked]="boxMode()" [disabled]="!!blockingMessage()" (change)="boxMode.set(!boxMode())">
         <span>Box mode</span>
@@ -39,15 +39,22 @@
         <option value="h2">h2</option>
         <option value="h3">h3</option>
         <option value="caption">caption</option>
-        <option value="table">table crop</option>
-        <option value="img">img crop</option>
-        <option value="equation">equation</option>
+        <option *ngIf="!isArchiveSource()" value="table">table crop</option>
+        <option *ngIf="!isArchiveSource()" value="img">img crop</option>
+        <option *ngIf="!isArchiveSource()" value="equation">equation</option>
       </select>
-      <button type="button" (click)="saveBoxes()" [disabled]="!boxMode() || !hasBoxChanges() || savingBoxes() || !!blockingMessage()">{{ savingBoxes() ? 'Saving...' : 'Save Boxes' }}</button>
-      <button type="button" (click)="recognizeSelectedEquation()" [disabled]="!boxMode() || !selectedEquationBox() || recognizingEquation() || !!blockingMessage()">{{ recognizingEquation() ? 'Reading math...' : 'Read Equation' }}</button>
+      <label class="toolbar-select" *ngIf="isArchiveSource()">
+        <span>Final CSS</span>
+        <select [ngModel]="archiveFinalCssStrategy()" (ngModelChange)="archiveFinalCssStrategy.set($event)" [disabled]="!boxMode() || savingBoxes() || !!blockingMessage()">
+          <option value="factor-common-css">move common CSS to semantic parent</option>
+          <option value="preserve-child-css">semantic tag only, keep child CSS</option>
+        </select>
+      </label>
+      <button type="button" (click)="saveBoxes()" [disabled]="!boxMode() || !hasZoningOutputChanges() || savingBoxes() || !!blockingMessage()">{{ savingBoxes() ? 'Saving...' : 'Save Boxes' }}</button>
+      <button *ngIf="!isArchiveSource()" type="button" (click)="recognizeSelectedEquation()" [disabled]="!boxMode() || !selectedEquationBox() || recognizingEquation() || !!blockingMessage()">{{ recognizingEquation() ? 'Reading math...' : 'Read Equation' }}</button>
       <button type="button" (click)="openFinalOutput()" [disabled]="!page() || !!blockingMessage()">Open Final</button>
       <button type="button" (click)="deleteSelectedBox()" [disabled]="!boxMode() || !selectedBoxId() || !!blockingMessage()">Delete Box</button>
-      <ng-container *ngIf="boxMode()">
+      <ng-container *ngIf="boxMode() && !isArchiveSource()">
         <span class="toolbar-hint">Table:</span>
         <select
           [ngModel]="selectedTableMode()"
@@ -62,8 +69,22 @@
       </ng-container>
       <button type="button" (click)="previousPage()" [disabled]="pageIndex() === 0 || !!blockingMessage()">Previous</button>
       <button type="button" (click)="nextPage()" [disabled]="pageIndex() >= pageCount() - 1 || !!blockingMessage()">Next</button>
+      <a class="toolbar-download" [href]="reviewZipUrl()">Review ZIP</a>
+      <a class="toolbar-download" [href]="finalZipUrl()">Final ZIP</a>
       <span class="equation-status" *ngIf="equationMessage()">{{ equationMessage() }}</span>
     </header>
+
+    <div class="archive-zoning-notice" *ngIf="showArchiveZoningNotice()">
+      <section class="archive-zoning-notice__card" role="dialog" aria-modal="false" aria-labelledby="archive-zoning-title">
+        <header>
+          <strong id="archive-zoning-title">Imported book opened in zoning</strong>
+          <button type="button" (click)="showArchiveZoningNotice.set(false)" aria-label="Close">&times;</button>
+        </header>
+        <p>The original EPUB/XHTML page is shown unchanged. Draw semantic boxes and save them page by page.</p>
+        <p>Saving creates a separate final XHTML page with ordered semantic parents while preserving the fixed-layout source styling. Unicode conversion, crops, equations, and table extraction are not applied automatically.</p>
+        <button type="button" (click)="showArchiveZoningNotice.set(false)">Start zoning</button>
+      </section>
+    </div>
 
     <div class="review-popup" *ngIf="showStatsPopup()" (click)="showStatsPopup.set(false)">
       <section class="review-popup__card" (click)="$event.stopPropagation()">
@@ -145,7 +166,7 @@
         <div class="pane-title" *ngIf="showFinalPane()">Review</div>
         <div class="fit-box" [style.width.px]="scaledWidth()" [style.height.px]="scaledHeight()">
           <div class="frame-stack" [style.width.px]="currentPage.pageWidth" [style.height.px]="currentPage.pageHeight" [style.transform]="transform()">
-            <iframe class="html-preview" [src]="reviewHtmlUrl()" scrolling="no" sandbox="allow-same-origin" (load)="onReviewIframeLoad($event)"></iframe>
+            <iframe #reviewIframe class="html-preview" [src]="reviewHtmlUrl()" scrolling="no" sandbox="allow-same-origin" (load)="onReviewIframeLoad($event)"></iframe>
             <div
               class="box-overlay"
               [class.is-active]="boxMode()"
@@ -200,7 +221,7 @@
       </div>
 
       <div class="surface surface--single surface--final" *ngIf="showFinalPane() && page() as currentPage">
-        <div class="pane-title">Final</div>
+        <div class="pane-title">{{ isArchiveSource() ? 'Final zoning preview' : 'Final' }}</div>
         <div class="fit-box" [style.width.px]="scaledWidth()" [style.height.px]="scaledHeight()">
         <iframe class="html-preview" [src]="finalPreviewUrl()" [style.width.px]="currentPage.pageWidth" [style.height.px]="currentPage.pageHeight" [style.transform]="transform()" scrolling="no" sandbox="allow-same-origin"></iframe>
         </div>

@@ -1,0 +1,33 @@
+<main class="home-shell">
+  <nav class="home-nav">
+    <a class="brand" routerLink="/"><span class="brand__mark">D</span><span>Document Workbench</span></a>
+    <a class="nav-link" routerLink="/dashboard">Projects</a>
+  </nav>
+
+  <section class="hero">
+    <p class="eyebrow">Fixed-layout production workspace</p>
+    <h1>What are you working with?</h1>
+    <p>Choose the source you already have. The workbench will show only the tools that apply to that workflow.</p>
+  </section>
+
+  <section class="workflow-grid" aria-label="Choose workflow">
+    <a class="workflow-card workflow-card--pdf" routerLink="/upload-pdf">
+      <div class="workflow-card__top"><span class="workflow-icon">PDF</span><span class="workflow-status">Extraction workflow</span></div>
+      <div><h2>Start from a PDF</h2><p>Extract pages, fonts and positioned text, then review and create semantic zones.</p></div>
+      <ul><li>Pixel-aligned review</li><li>Semantic zoning</li><li>Final XHTML output</li></ul>
+      <span class="workflow-action">Upload PDF <b>→</b></span>
+    </a>
+
+    <a class="workflow-card workflow-card--archive" routerLink="/upload-archive">
+      <div class="workflow-card__top"><span class="workflow-icon">ZIP</span><span class="workflow-status">Import workflow</span></div>
+      <div><h2>Use existing EPUB/XHTML</h2><p>Import pages produced by another tool without running PDF extraction again.</p></div>
+      <ul><li>Preserve original package</li><li>Inspect fixed-layout pages</li><li>Prepare for zoning and text repair</li></ul>
+      <span class="workflow-action">Import archive <b>→</b></span>
+    </a>
+  </section>
+
+  <section class="workflow-map">
+    <strong>One workspace, separate stages</strong>
+    <div><span>1. Import</span><i></i><span>2. Configure</span><i></i><span>3. Review &amp; zone</span><i></i><span>4. Export</span></div>
+  </section>
+</main>

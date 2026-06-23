@@ -1,21 +1,22 @@
 <main class="upload-page">
+  <nav class="upload-nav"><a routerLink="/">← Workflows</a><a routerLink="/dashboard">Projects</a></nav>
   <section class="panel">
     <div class="panel__hero">
-      <p class="eyebrow">Local QA Tool</p>
-      <h1>PDF Review Workbench</h1>
-      <p class="subtitle">Extract pages into fixed-layout HTML, review them side by side, and correct semantic overlays before downstream EPUB or archive export.</p>
+      <p class="eyebrow">PDF extraction workflow</p>
+      <h1>Start from a PDF</h1>
+      <p class="subtitle">The workbench will extract page images, fonts and positioned text before opening the side-by-side zoning reader.</p>
     </div>
 
     <label class="mode-toggle">
       <input type="checkbox" [checked]="useLocalPath()" (change)="useLocalPath.set(!useLocalPath())">
-      <span>Use trusted local path instead of file upload</span>
+      <span>Advanced: use a trusted local filesystem path</span>
     </label>
 
     <div *ngIf="!useLocalPath(); else pathMode" class="drop-zone">
       <div class="drop-zone__icon">PDF</div>
       <div class="drop-zone__copy">
-        <strong>{{ selectedFile()?.name ?? 'Drop PDF here or click to browse' }}</strong>
-        <p>Supported input: local PDF files only. Large files above 50 MB are accepted but extraction will take longer.</p>
+        <strong>{{ selectedFile()?.name ?? 'Choose a PDF file' }}</strong>
+        <p>PDF only. Files above 50 MB are supported but take longer to extract.</p>
       </div>
       <input type="file" accept="application/pdf" (change)="onFileSelected($event)">
     </div>
@@ -28,7 +29,7 @@
     </ng-template>
 
     <div class="panel__actions">
-      <a class="secondary" routerLink="/dashboard">Dashboard</a>
+      <a class="secondary" routerLink="/">Change workflow</a>
       <button type="button" class="primary" (click)="submit()" [disabled]="!canSubmit()">{{ busy() ? 'Processing…' : 'Start Extraction' }}</button>
     </div>
 

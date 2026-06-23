@@ -1,6 +1,8 @@
-import { mkdir, readFile, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import path from "node:path";
-import { type DraftPageState, type ExtractionJob, type FontExtractionManifest, type JobEditSummary, type OcrComparisonResult, type OcrPageResult, type PageResult } from "../types.js";
+import { type DraftPageState, type ExtractionJob, type FontExtractionManifest, type ImportedBookManifest, type JobEditSummary, type OcrComparisonResult, type OcrPageResult, type PageResult, type PdfPageBounds } from "../types.js";
 import { storageRoot } from "../config/runtime.js";
 
 const STORAGE_ROOT = storageRoot;
@@ -47,17 +49,26 @@ async function ensureDir(dirPath: string): Promise<void> {
 }
 
 async function readJson<T>(filePath: string): Promise<T | null> {
-  try {
-    const content = await readFile(filePath, "utf8");
-    return JSON.parse(content) as T;
-  } catch {
-    return null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const content = await readFile(filePath, "utf8");
+      return JSON.parse(content) as T;
+    } catch {
+      if (attempt < 2) await delay(10);
+    }
   }
+  return null;
 }
 
 async function writeJson(filePath: string, value: unknown): Promise<void> {
   await ensureDir(path.dirname(filePath));
-  await writeFile(filePath, JSON.stringify(value, null, 2), "utf8");
+  const temporaryPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`);
+  try {
+    await writeFile(temporaryPath, JSON.stringify(value, null, 2), "utf8");
+    await rename(temporaryPath, filePath);
+  } finally {
+    await unlink(temporaryPath).catch(() => void 0);
+  }
 }
 
 export class JobStore {
@@ -82,7 +93,8 @@ export class JobStore {
       ensureDir(this.getFinalDir(job.id)),
       ensureDir(this.getStylesDir(job.id)),
       ensureDir(this.getFontsDir(job.id)),
-      ensureDir(this.getOcrDir(job.id))
+      ensureDir(this.getOcrDir(job.id)),
+      ensureDir(this.getImportedDir(job.id))
     ]);
     await this.saveJob(job);
     return job;
@@ -90,6 +102,14 @@ export class JobStore {
 
   async saveJob(job: StoredJobState): Promise<void> {
     await writeJson(this.getMetaPath(job.id), job);
+  }
+
+  async saveSourceManifest(jobId: string, manifest: ImportedBookManifest): Promise<void> {
+    await writeJson(this.getSourceManifestPath(jobId), manifest);
+  }
+
+  async getSourceManifest(jobId: string): Promise<ImportedBookManifest | null> {
+    return readJson<ImportedBookManifest>(this.getSourceManifestPath(jobId));
   }
 
   async getJob(jobId: string): Promise<StoredJobState | null> {
@@ -158,7 +178,7 @@ export class JobStore {
     ]);
   }
 
-  async savePdf2HtmlExPage(jobId: string, pageIndex: number, pageWidth: number, pageHeight: number, imageBytes: Uint8Array): Promise<void> {
+  async savePdf2HtmlExPage(jobId: string, pageIndex: number, pageWidth: number, pageHeight: number, imageBytes: Uint8Array, pdfPageBounds?: PdfPageBounds, renderDpi?: number): Promise<void> {
     const page: PageResult = {
       pageIndex,
       imageUrl: `/api/jobs/${jobId}/pages/${pageIndex}/image`,
@@ -167,6 +187,8 @@ export class JobStore {
       confidence: 1,
       pageWidth,
       pageHeight,
+      pdfPageBounds,
+      renderDpi,
       leftMarginPx: 0,
       reviewStatus: "unvisited"
     };
@@ -294,6 +316,8 @@ export class JobStore {
   getCropsDir(jobId: string): string { return path.join(this.getImagesDir(jobId), "crops"); }
   getFontManifestPath(jobId: string): string { return path.join(this.getFontsDir(jobId), "manifest.json"); }
   getOcrDir(jobId: string): string { return path.join(this.getJobDir(jobId), "ocr"); }
+  getImportedDir(jobId: string): string { return path.join(this.getJobDir(jobId), "imported"); }
+  getSourceManifestPath(jobId: string): string { return path.join(this.getJobDir(jobId), "source-manifest.json"); }
   getImagesDir(jobId: string): string { return path.join(this.getJobDir(jobId), "images"); }
   getImagePath(jobId: string, pageIndex: number): string { return path.join(this.getImagesDir(jobId), `page-${pageIndex + 1}.png`); }
   getPageJsonPath(jobId: string, pageIndex: number): string { return path.join(this.getPagesDir(jobId), `${pageIndex}.json`); }

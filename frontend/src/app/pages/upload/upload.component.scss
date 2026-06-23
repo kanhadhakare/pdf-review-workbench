@@ -8,6 +8,25 @@
     linear-gradient(180deg, #0b0f15 0%, #0f1117 100%);
 }
 
+.upload-nav {
+  position: fixed;
+  top: 20px;
+  left: 24px;
+  right: 24px;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+}
+
+.upload-nav a,
+.secondary {
+  color: var(--text-dim);
+  text-decoration: none;
+}
+
+.upload-nav a:hover,
+.secondary:hover { color: var(--text); }
+
 .panel {
   width: min(760px, 100%);
   display: grid;
@@ -15,7 +34,8 @@
   background: linear-gradient(180deg, rgba(26, 29, 39, 0.96), rgba(19, 22, 31, 0.96));
   border: 1px solid var(--border);
   box-shadow: 0 22px 60px rgba(0, 0, 0, 0.35);
-  padding: 28px;
+  padding: 32px;
+  border-radius: 14px;
 }
 
 .panel__hero {
@@ -59,7 +79,8 @@ h1 {
   align-items: center;
   padding: 24px;
   border: 1px dashed rgba(74, 144, 226, 0.32);
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(255, 255, 255, 0.025);
+  border-radius: 10px;
 }
 
 .drop-zone__icon {
@@ -110,6 +131,8 @@ input[type="text"] {
 .panel__actions {
   display: flex;
   justify-content: flex-start;
+  align-items: center;
+  gap: 14px;
 }
 
 .primary {
@@ -117,6 +140,7 @@ input[type="text"] {
   padding: 12px 18px;
   background: linear-gradient(180deg, #1e3557, #18314f);
   border-color: rgba(74, 144, 226, 0.35);
+  border-radius: 8px;
 }
 
 .primary:disabled {

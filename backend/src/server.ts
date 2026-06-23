@@ -29,7 +29,7 @@ app.use(express.json({ limit: "10mb" }));
 app.use("/storage/jobs", express.static(path.join(storageRoot, "jobs"), {
   setHeaders: (res, filePath) => {
     const extension = path.extname(filePath).toLowerCase();
-    if (extension === ".html" || extension === ".css" || extension === ".json") {
+    if (extension === ".html" || extension === ".xhtml" || extension === ".css" || extension === ".json") {
       res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
       res.setHeader("Pragma", "no-cache");
       res.setHeader("Expires", "0");

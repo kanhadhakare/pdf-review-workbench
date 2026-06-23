@@ -6,6 +6,7 @@ export enum ExtractionStatus {
 }
 
 export type SemanticTag = "h1" | "h2" | "h3" | "p" | "span" | "caption" | "table" | "artifact" | "img" | "equation";
+export type ArchiveZoningCssStrategy = "factor-common-css" | "preserve-child-css";
 
 export interface BlockStyles {
   textIndent: number;
@@ -24,6 +25,58 @@ export interface RawSpan {
   fontName: string;
   fontColor?: string;
   rotation?: number;
+}
+
+export type SourceType = "pdf" | "html-zip" | "epub";
+export type SourceLayout = "fixed" | "reflowable" | "unknown";
+export type ArchiveTextHandling = "preserve" | "audit" | "safe-cleanup" | "advanced-repair";
+export type UnicodeNormalizationMode = "none" | "nfc" | "nfkc";
+export type UnicodeMojibakeRepairMode = "off" | "high-confidence";
+export type UnicodeJoinerPolicy = "preserve" | "remove-redundant-indic";
+
+export interface ArchiveUnicodeOptions {
+  normalization: UnicodeNormalizationMode;
+  applyLanguageMetadata: boolean;
+  mojibakeRepair: UnicodeMojibakeRepairMode;
+  joinerPolicy: UnicodeJoinerPolicy;
+  legacyFontProfile: "off";
+}
+
+export interface ArchiveImportOptions {
+  purpose: "zoning" | "inspection";
+  pageDiscovery: "auto" | "spine" | "all-xhtml";
+  layoutMode: "auto" | "fixed" | "reflowable";
+  language: "auto" | string;
+  readingDirection: "auto" | "ltr" | "rtl";
+  textHandling: ArchiveTextHandling;
+  unicode: ArchiveUnicodeOptions;
+}
+
+export interface ImportedPageManifest {
+  pageIndex: number;
+  sourcePath: string;
+  reviewPath: string;
+  width: number;
+  height: number;
+  title?: string;
+}
+
+export interface ImportedBookManifest {
+  version: 1;
+  jobId: string;
+  sourceType: SourceType;
+  layout: SourceLayout;
+  sourceRoot?: string;
+  reviewRoot?: string;
+  unicodeReportPath?: string;
+  status: "pending" | "ready" | "failed";
+  originalFileName: string;
+  pages: ImportedPageManifest[];
+  sharedAssets: string[];
+  warnings: string[];
+  importOptions?: ArchiveImportOptions;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface SemanticTableGrid {
@@ -95,7 +148,17 @@ export interface ExtractionJob {
   dpi: number;
   filePath: string;
   originalFileName: string;
+  sourceType?: SourceType;
   enableOcrValidation?: boolean;
+}
+
+export interface PdfPageBounds {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  widthPt: number;
+  heightPt: number;
 }
 
 export interface PageResult {
@@ -106,6 +169,8 @@ export interface PageResult {
   confidence: number;
   pageWidth: number;
   pageHeight: number;
+  pdfPageBounds?: PdfPageBounds;
+  renderDpi?: number;
   leftMarginPx: number;
   reviewStatus: "unvisited" | "reviewed" | "edited";
   ocrValidation?: OcrValidationSummary;
