@@ -4,7 +4,7 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 import { Router } from "express";
 import multer from "multer";
-import { ExtractionStatus, type ArchiveImportOptions, type JobsResponse, type SourceType } from "../types.js";
+import { ExtractionStatus, type ArchiveImportOptions, type JobWorkflow, type JobsResponse, type SourceType } from "../types.js";
 import { getAllowedLocalPathRoots } from "../config/runtime.js";
 import { getActiveEngine } from "../services/extractor.js";
 import { spawnExtractionJob } from "../services/extractionRunner.js";
@@ -14,6 +14,9 @@ import { buildFinalArchive, buildReviewArchive } from "../services/finalArchiveS
 import { jobStore, type StoredJobState } from "../services/jobStore.js";
 import { createPendingSourceManifest, detectSourceType } from "../services/sourceFormatService.js";
 import { importArchiveBook } from "../services/archiveBookService.js";
+import { getAccessibilityMap, getAccessibilityPage, saveAccessibilityPage } from "../services/accessibilityStore.js";
+import { detectAccessibilityTagsForJob, detectAccessibilityTagsForPage } from "../services/accessibilityDetectionService.js";
+import { validateAccessibilityMap } from "../services/accessibilityValidationService.js";
 
 const upload = multer({ storage: multer.memoryStorage() });
 const archiveUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 250 * 1024 * 1024 } });
@@ -30,6 +33,18 @@ function normalizeLocalPath(localPath: string): string {
 
 function parseBooleanOption(value: unknown): boolean {
   return value === true || value === "true" || value === "1" || value === 1;
+}
+
+function parseJobWorkflow(value: unknown): JobWorkflow {
+  return value === "accessibility-tagging" ? "accessibility-tagging" : "zoning";
+}
+
+function parseOptionalTargetWidth(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) throw new Error("Target width must be a positive number");
+  if (parsed < 200 || parsed > 5000) throw new Error("Target width must be between 200 and 5000 pixels");
+  return Math.round(parsed);
 }
 
 function parseArchiveOptions(value: unknown): ArchiveImportOptions {
@@ -60,7 +75,7 @@ function parseArchiveOptions(value: unknown): ArchiveImportOptions {
   };
 }
 
-async function createJobState(filePath: string, originalFileName: string, sourceType: SourceType, enableOcrValidation: boolean, warning?: "large_file"): Promise<StoredJobState> {
+async function createJobState(filePath: string, originalFileName: string, sourceType: SourceType, enableOcrValidation: boolean, workflow: JobWorkflow, warning?: "large_file", targetWidthPx?: number): Promise<StoredJobState> {
   const fingerprint = await fingerprintPdf(filePath);
   const now = new Date().toISOString();
   return {
@@ -74,7 +89,9 @@ async function createJobState(filePath: string, originalFileName: string, source
     filePath,
     originalFileName,
     sourceType,
+    workflow,
     enableOcrValidation,
+    targetWidthPx,
     processedPages: 0,
     warning
   };
@@ -180,12 +197,105 @@ jobsRouter.get("/:id/source-manifest", async (req, res) => {
   res.json(manifest);
 });
 
+jobsRouter.get("/:id/accessibility", async (req, res) => {
+  const job = await jobStore.getJob(req.params.id);
+  if (!job) {
+    res.status(404).json({ message: "Job not found" });
+    return;
+  }
+  res.json(await getAccessibilityMap(job.id));
+});
+
+jobsRouter.get("/:id/accessibility/pages/:pageIndex", async (req, res) => {
+  const job = await jobStore.getJob(req.params.id);
+  if (!job) {
+    res.status(404).json({ message: "Job not found" });
+    return;
+  }
+  const pageIndex = Number(req.params.pageIndex);
+  if (!Number.isInteger(pageIndex) || pageIndex < 0) {
+    res.status(400).json({ message: "Invalid page index" });
+    return;
+  }
+  res.json(await getAccessibilityPage(job.id, pageIndex));
+});
+
+jobsRouter.put("/:id/accessibility/pages/:pageIndex", async (req, res) => {
+  const job = await jobStore.getJob(req.params.id);
+  if (!job) {
+    res.status(404).json({ message: "Job not found" });
+    return;
+  }
+  const pageIndex = Number(req.params.pageIndex);
+  if (!Number.isInteger(pageIndex) || pageIndex < 0) {
+    res.status(400).json({ message: "Invalid page index" });
+    return;
+  }
+  const page = await saveAccessibilityPage(job.id, pageIndex, {
+    tags: Array.isArray(req.body?.tags) ? req.body.tags : [],
+    reviewStatus: req.body?.reviewStatus
+  });
+  res.json(page);
+});
+
+jobsRouter.post("/:id/accessibility/pages/:pageIndex/detect", async (req, res) => {
+  const job = await jobStore.getJob(req.params.id);
+  if (!job) {
+    res.status(404).json({ message: "Job not found" });
+    return;
+  }
+  const pageIndex = Number(req.params.pageIndex);
+  if (!Number.isInteger(pageIndex) || pageIndex < 0) {
+    res.status(400).json({ message: "Invalid page index" });
+    return;
+  }
+  try {
+    res.json(await detectAccessibilityTagsForPage(job.id, pageIndex, parseBooleanOption(req.body?.replace)));
+  } catch (error) {
+    res.status(500).json({ message: error instanceof Error ? error.message : "Unable to detect accessibility tags" });
+  }
+});
+
+jobsRouter.post("/:id/accessibility/detect", async (req, res) => {
+  const job = await jobStore.getJob(req.params.id);
+  if (!job) {
+    res.status(404).json({ message: "Job not found" });
+    return;
+  }
+  try {
+    res.json(await detectAccessibilityTagsForJob(job.id, parseBooleanOption(req.body?.replace)));
+  } catch (error) {
+    res.status(500).json({ message: error instanceof Error ? error.message : "Unable to detect accessibility tags" });
+  }
+});
+
+jobsRouter.post("/:id/accessibility/validate", async (req, res) => {
+  const job = await jobStore.getJob(req.params.id);
+  if (!job) {
+    res.status(404).json({ message: "Job not found" });
+    return;
+  }
+  try {
+    res.json(await validateAccessibilityMap(job.id));
+  } catch (error) {
+    res.status(500).json({ message: error instanceof Error ? error.message : "Unable to validate accessibility map" });
+  }
+});
+
+jobsRouter.post("/:id/accessibility/export-pdf", async (_req, res) => {
+  res.status(501).json({
+    message: "Tagged PDF export is intentionally not implemented yet. Choose a PDF tag-writing engine first: PDFix/Apryse for production speed, or a custom pikepdf/qpdf writer as a separate R&D phase."
+  });
+});
+
 jobsRouter.post("/", upload.single("file"), async (req, res) => {
   try {
     let bytes: Uint8Array;
     let originalFileName: string;
     let warning: "large_file" | undefined;
     const enableOcrValidation = parseBooleanOption(req.body?.enableOcrValidation);
+    const workflow = parseJobWorkflow(req.body?.workflow);
+    const targetWidthPx = parseOptionalTargetWidth(req.body?.targetWidthPx);
 
     if (req.file) {
       bytes = new Uint8Array(req.file.buffer);
@@ -211,7 +321,7 @@ jobsRouter.post("/", upload.single("file"), async (req, res) => {
     const tempPath = path.join(jobStore.storageRoot, "uploads", `${Date.now()}-${originalFileName}`);
     await mkdir(path.dirname(tempPath), { recursive: true });
     await writeFile(tempPath, bytes);
-    const job = await createJobState(tempPath, originalFileName, sourceType, enableOcrValidation, warning);
+    const job = await createJobState(tempPath, originalFileName, sourceType, enableOcrValidation, workflow, warning, targetWidthPx);
     await jobStore.create(job);
     await jobStore.saveSourceManifest(job.id, createPendingSourceManifest(job.id, sourceType, originalFileName, job.createdAt));
     const sourcePdfPath = await jobStore.saveSourcePdf(job.id, bytes);

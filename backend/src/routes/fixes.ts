@@ -284,17 +284,7 @@ fixesRouter.put("/span-corrections", async (req, res) => {
       leftDeltaPx,
       letterSpacingPx
     });
-    for (const affectedPageIndex of result.affectedPages) {
-      const affectedPageNumber = affectedPageIndex + 1;
-      const boxesPath = path.join(jobStore.getFinalDir(jobId), `page-${affectedPageNumber}.boxes.json`);
-      const content = await readFile(boxesPath, "utf8").catch(() => "");
-      if (!content) continue;
-      const payload = JSON.parse(content) as { boxes?: SemanticBox[] };
-      if (Array.isArray(payload.boxes)) {
-        await generateFinalPageFromBoxes(jobId, affectedPageIndex, payload.boxes);
-      }
-    }
-    res.json({ ok: true, corrections: result.corrections, affectedPages: result.affectedPages });
+    res.json({ ok: true, correctionCount: result.correctionCount, affectedPages: result.affectedPages });
   } catch (error) {
     res.status(500).json({ message: error instanceof Error ? error.message : "Unable to save span correction" });
   }

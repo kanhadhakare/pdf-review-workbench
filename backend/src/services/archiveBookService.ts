@@ -6,6 +6,7 @@ import { prepareArchiveUnicodeSource } from "./archiveUnicodeService.js";
 import { jobStore } from "./jobStore.js";
 
 type OpfItem = { id: string; href: string; mediaType: string };
+type ArchivePagePathResult = { pagePaths: string[]; warnings: string[] };
 
 function xmlAttributes(tag: string): Record<string, string> {
   const attributes: Record<string, string> = {};
@@ -95,15 +96,30 @@ async function epubSpinePages(sourceDir: string): Promise<string[]> {
   return pages;
 }
 
-async function archivePagePaths(sourceDir: string, sourceType: Exclude<SourceType, "pdf">, files: string[], options: ArchiveImportOptions): Promise<string[]> {
+function fileExistsInArchive(files: Set<string>, relativePath: string): boolean {
+  return files.has(normalizeRelativePath(relativePath).toLowerCase());
+}
+
+async function archivePagePaths(sourceDir: string, sourceType: Exclude<SourceType, "pdf">, files: string[], options: ArchiveImportOptions): Promise<ArchivePagePathResult> {
+  const fileSet = new Set(files.map((file) => normalizeRelativePath(file).toLowerCase()));
+  const warnings: string[] = [];
   if (sourceType === "epub" && options.pageDiscovery !== "all-xhtml") {
     const spinePages = await epubSpinePages(sourceDir);
-    if (spinePages.length) return spinePages;
+    if (spinePages.length) {
+      const existingSpinePages = spinePages.filter((page) => fileExistsInArchive(fileSet, page));
+      for (const missingPage of spinePages.filter((page) => !fileExistsInArchive(fileSet, page))) {
+        warnings.push(`Skipped missing EPUB spine page: ${missingPage}`);
+      }
+      if (existingSpinePages.length) return { pagePaths: existingSpinePages, warnings };
+    }
   }
-  return files
+  return {
+    pagePaths: files
     .filter((file) => /\.(?:xhtml|html|htm)$/i.test(file))
     .filter((file) => !/(?:^|\/)(?:nav|navigation|toc)(?:\.[^/]*)?\.(?:xhtml|html|htm)$/i.test(file))
-    .sort(naturalPageSort);
+      .sort(naturalPageSort),
+    warnings
+  };
 }
 
 export async function importArchiveBook(
@@ -117,7 +133,7 @@ export async function importArchiveBook(
   const extraction = await extractJobArchive(jobId, archivePath, sourceType);
   const unicodePreparation = await prepareArchiveUnicodeSource(jobId, extraction.files, options);
   const sourceDir = path.join(jobStore.getImportedDir(jobId), unicodePreparation.reviewRoot);
-  const pagePaths = await archivePagePaths(sourceDir, sourceType, extraction.files, options);
+  const { pagePaths, warnings: pagePathWarnings } = await archivePagePaths(sourceDir, sourceType, extraction.files, options);
   if (!pagePaths.length) throw new Error("Archive does not contain XHTML or HTML content pages");
 
   const pages: ImportedPageManifest[] = [];
@@ -152,6 +168,7 @@ export async function importArchiveBook(
     sharedAssets: extraction.files.filter((file) => !pageSet.has(file.toLowerCase())),
     warnings: [
       ...extraction.skippedFiles.map((file) => `Skipped unsupported archive file: ${file}`),
+      ...pagePathWarnings,
       ...unicodePreparation.warnings,
       ...(unicodePreparation.report.totals.mojibakeRepairs > 0 ? [`Unicode repair changed ${unicodePreparation.report.totals.mojibakeRepairs} high-confidence mojibake text runs.`] : []),
       ...(unicodePreparation.report.totals.redundantJoinersRemoved > 0 ? [`Unicode cleanup removed ${unicodePreparation.report.totals.redundantJoinersRemoved} redundant Indic joiners.`] : []),

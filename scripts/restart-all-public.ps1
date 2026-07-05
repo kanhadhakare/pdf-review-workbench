@@ -38,6 +38,11 @@ if (-not $SkipBuild) {
     npm.cmd run build
     Pop-Location
   }
+  Invoke-Checked "Build frontend" {
+    Push-Location "$root\frontend"
+    npm.cmd run build
+    Pop-Location
+  }
 }
 
 Invoke-Checked "Start Windows app stack" {

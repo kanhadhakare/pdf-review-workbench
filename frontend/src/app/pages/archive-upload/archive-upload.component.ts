@@ -20,6 +20,7 @@ export class ArchiveUploadComponent {
   readonly busy = signal(false);
   readonly status = signal("Waiting for archive");
   readonly error = signal("");
+  readonly showAdvancedOptions = signal(false);
   readonly purpose = signal<ArchiveImportOptions["purpose"]>("zoning");
   readonly pageDiscovery = signal<ArchiveImportOptions["pageDiscovery"]>("auto");
   readonly layoutMode = signal<ArchiveImportOptions["layoutMode"]>("auto");
@@ -70,5 +71,9 @@ export class ArchiveUploadComponent {
         this.error.set(error?.error?.message ?? "Unable to import archive.");
       }
     });
+  }
+
+  toggleAdvancedOptions(): void {
+    this.showAdvancedOptions.update((value) => !value);
   }
 }

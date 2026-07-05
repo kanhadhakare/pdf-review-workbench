@@ -1,5 +1,6 @@
 ﻿import { createHash, randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
+import path from "node:path";
 import { ExtractionStatus, type ClassifierResult, type ExtractedFontAsset, type ExtractionProfile, type FontExtractionManifest, type ImportedPageManifest, type PageResult, type PdfPageBounds, type RawSpan, type SemanticTag, type TextBlock } from "../types.js";
 import { classifyBlocks } from "./classifier.js";
 import { jobStore, type StoredJobState } from "./jobStore.js";
@@ -7,9 +8,12 @@ import { extractFontsWithPdfBox } from "./pdfboxFontService.js";
 import { convertManifestFontsForWeb } from "./fontConversionService.js";
 import { validatePage } from "./validator.js";
 import { isPdf2HtmlExEnabled, runPdf2HtmlEx, validatePdf2HtmlExOutput } from "./pdf2htmlExService.js";
-import { extractionMaxDpi } from "../config/runtime.js";
+import { extractionMaxDpi, extractionMaxPixels, extractionMinDpi, largePdfPagesPerChunk, mupdfMaxInputBytes } from "../config/runtime.js";
 import { normalizePdfText } from "./textNormalizer.js";
-import { destroyMuPdfObject } from "./mupdfLifecycle.js";
+import { destroyMuPdfObject, withMuPdfLock } from "./mupdfLifecycle.js";
+import { fitMuPdfRenderSizing, fitMuPdfRenderSizingToWidth } from "./mupdfRenderSizing.js";
+import { createJobLogger, type JobLogger } from "./jobLogger.js";
+import { splitPdfWithPdfBox } from "./pdfboxPdfToolService.js";
 
 type MuPdfModule = typeof import("mupdf");
 type MuPdfPdfDocument = import("mupdf").PDFDocument;
@@ -34,6 +38,41 @@ interface PageExtraction {
   spans: ExtractorSpan[];
   reviewWords: ReviewWord[];
   imageBytes: Uint8Array;
+}
+
+type SelectedPageBox = {
+  name: NonNullable<PdfPageBounds["box"]>;
+  bounds: [number, number, number, number];
+};
+
+interface MuPdfExtractionOptions {
+  pageIndexOffset?: number;
+  totalPageCount?: number;
+  targetWidthPx?: number;
+}
+
+const MAX_EFFECTIVE_RENDER_PIXELS = 8_000_000;
+const MAX_RENDER_DIMENSION_PX = 8_192;
+const MAX_RENDER_BYTES = 128 * 1024 * 1024;
+const MAX_SAFE_PAGE_BOX_PT = 5_000;
+
+async function getFileSize(filePath: string): Promise<number> {
+  const info = await stat(filePath);
+  return info.size;
+}
+
+function isTooLargeForMuPdf(fileSize: number): boolean {
+  return fileSize > mupdfMaxInputBytes;
+}
+
+async function assertMuPdfInputSize(filePath: string, logger?: JobLogger): Promise<void> {
+  const size = await getFileSize(filePath);
+  await logger?.info("mupdf.input-size", { bytes: size, maxBytes: mupdfMaxInputBytes });
+  if (isTooLargeForMuPdf(size)) {
+    throw new Error(
+      `PDF is too large for MuPDF WASM (${Math.round(size / 1024 / 1024)} MB). Current limit is ${Math.round(mupdfMaxInputBytes / 1024 / 1024)} MB. Use native MuPDF/Poppler for this file or upload an optimized/split PDF.`
+    );
+  }
 }
 
 interface StructuredPageJson {
@@ -239,7 +278,7 @@ function quadFromValue(value: unknown): number[] | null {
   return flattened.length >= 8 && flattened.every(Number.isFinite) ? flattened : null;
 }
 
-function bboxFromQuad(quad: number[], scale: number, profile: ExtractionProfile): { x: number; y: number; w: number; h: number } {
+function bboxFromQuad(quad: number[], scale: number, profile: ExtractionProfile, originX = 0, originY = 0): { x: number; y: number; w: number; h: number } {
   const xs = [quad[0], quad[2], quad[4], quad[6]];
   const ys = [quad[1], quad[3], quad[5], quad[7]];
   const minX = Math.min(...xs);
@@ -247,8 +286,8 @@ function bboxFromQuad(quad: number[], scale: number, profile: ExtractionProfile)
   const minY = Math.min(...ys);
   const maxY = Math.max(...ys);
   return {
-    x: (minX * scale) + profile.coordOffsetX,
-    y: (minY * scale) + profile.coordOffsetY,
+    x: ((minX - originX) * scale) + profile.coordOffsetX,
+    y: ((minY - originY) * scale) + profile.coordOffsetY,
     w: Math.max(0.1, (maxX - minX) * scale),
     h: Math.max(0.1, (maxY - minY) * scale)
   };
@@ -325,7 +364,7 @@ function structuredCharsToReviewWords(chars: StructuredChar[], profile: Extracti
   return words;
 }
 
-function collectReviewWords(structured: unknown, profile: ExtractionProfile, scale: number): ReviewWord[] {
+function collectReviewWords(structured: unknown, profile: ExtractionProfile, scale: number, originX = 0, originY = 0): ReviewWord[] {
   const words: ReviewWord[] = [];
   let lineChars: StructuredChar[] = [];
   const flushLine = () => {
@@ -349,7 +388,7 @@ function collectReviewWords(structured: unknown, profile: ExtractionProfile, sca
         const size = Number(args[3]);
         const quad = quadFromValue(args[4]);
         if (!rawText || !quad) return;
-        const box = bboxFromQuad(quad, scale, profile);
+        const box = bboxFromQuad(quad, scale, profile, originX, originY);
         const fontName = font?.getName?.() ?? "Unknown";
         const rotation = rotationFromQuad(quad);
         lineChars.push({
@@ -373,6 +412,52 @@ function collectReviewWords(structured: unknown, profile: ExtractionProfile, sca
     console.warn("[extractor] failed to collect MuPDF character boxes:", error);
   }
   return words;
+}
+
+function validPageBox(bounds: [number, number, number, number] | number[]): bounds is [number, number, number, number] {
+  if (bounds.length !== 4 || !bounds.every(Number.isFinite) || bounds[2] <= bounds[0] || bounds[3] <= bounds[1]) return false;
+  const widthPt = bounds[2] - bounds[0];
+  const heightPt = bounds[3] - bounds[1];
+  return widthPt <= MAX_SAFE_PAGE_BOX_PT && heightPt <= MAX_SAFE_PAGE_BOX_PT;
+}
+
+function selectPageBox(page: import("mupdf").Page): SelectedPageBox {
+  for (const name of ["TrimBox", "CropBox", "MediaBox"] as const) {
+    try {
+      const bounds = page.getBounds(name) as [number, number, number, number];
+      if (validPageBox(bounds)) return { name, bounds };
+    } catch {
+      // Optional boxes may be absent or unsupported for non-PDF page types.
+    }
+  }
+  const bounds = page.getBounds() as [number, number, number, number];
+  return { name: "MediaBox", bounds };
+}
+
+function pageToPixmap(
+  page: import("mupdf").Page,
+  matrix: import("mupdf").Matrix,
+  colorspace: import("mupdf").ColorSpace,
+  box: NonNullable<PdfPageBounds["box"]>
+): import("mupdf").Pixmap {
+  if (page.isPDF()) return (page as MuPdfPdfPage).toPixmap(matrix, colorspace, false, true, undefined, box);
+  return page.toPixmap(matrix, colorspace, false, true);
+}
+
+function assertSafeRenderSize(pageIndex: number, widthPx: number, heightPx: number, dpi: number, box: NonNullable<PdfPageBounds["box"]>): void {
+  const pixelCount = widthPx * heightPx;
+  const estimatedBytes = pixelCount * 4;
+  if (
+    !Number.isFinite(pixelCount)
+    || !Number.isFinite(estimatedBytes)
+    || widthPx > MAX_RENDER_DIMENSION_PX
+    || heightPx > MAX_RENDER_DIMENSION_PX
+    || estimatedBytes > MAX_RENDER_BYTES
+  ) {
+    throw new Error(
+      `Refusing to rasterize page ${pageIndex + 1}: ${widthPx}x${heightPx}px at ${dpi} DPI from ${box} would require about ${Math.round(estimatedBytes / 1024 / 1024)} MB. Lower EXTRACT_MAX_PIXELS/EXTRACT_MAX_DPI or inspect PDF page boxes.`
+    );
+  }
 }
 
 function collectRotationHints(structured: unknown): RotationHint[] {
@@ -661,25 +746,33 @@ async function extractWithMuPdf(
   filePath: string,
   profile: ExtractionProfile,
   dpi: number,
-  onPage?: (page: PageExtraction, pageCount: number) => Promise<void>
+  onPage?: (page: PageExtraction, pageCount: number) => Promise<void>,
+  logger?: JobLogger,
+  options: MuPdfExtractionOptions = {}
 ): Promise<PageExtraction[]> {
-  const mupdf = await importMuPdf();
-  if (!mupdf) throw new Error("MuPDF unavailable");
-  activeEngine = "mupdf";
-  const pdfBytes = await readFile(filePath);
-  const document = mupdf.Document.openDocument(pdfBytes, "application/pdf");
-  try {
+  return withMuPdfLock(async () => {
+    const mupdf = await importMuPdf();
+    if (!mupdf) throw new Error("MuPDF unavailable");
+    activeEngine = "mupdf";
+    await assertMuPdfInputSize(filePath, logger);
+    const pdfBytes = await readFile(filePath);
+    const document = mupdf.Document.openDocument(pdfBytes, "application/pdf");
+    try {
     const pageCount = document.countPages();
-    const safeDpi = Math.min(extractionMaxDpi, Math.max(72, dpi));
-    const scale = Math.min(200, safeDpi) / 72;
-    const matrix = mupdf.Matrix.scale(scale, scale);
+    const pageIndexOffset = options.pageIndexOffset ?? 0;
+    const callbackPageCount = options.totalPageCount ?? pageCount;
+      await logger?.info("mupdf.page-count", { pageCount, pageIndexOffset, callbackPageCount });
+    const safeDpi = Math.min(extractionMaxDpi, Math.max(extractionMinDpi, dpi));
     const pages: PageExtraction[] = [];
     for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
       const page = document.loadPage(pageIndex);
       let pixmap: import("mupdf").Pixmap | null = null;
       let structured: import("mupdf").StructuredText | null = null;
       try {
-        const bounds = page.getBounds() as [number, number, number, number];
+        const originalPageIndex = pageIndex + pageIndexOffset;
+        await logger?.info("page.start", { pageNumber: originalPageIndex + 1, chunkPageNumber: pageIndex + 1, pageCount: callbackPageCount });
+        const selectedBox = selectPageBox(page);
+        const bounds = selectedBox.bounds;
         const widthPt = bounds[2] - bounds[0];
         const heightPt = bounds[3] - bounds[1];
         const pdfPageBounds: PdfPageBounds = {
@@ -688,17 +781,59 @@ async function extractWithMuPdf(
           x1: bounds[2],
           y1: bounds[3],
           widthPt,
-          heightPt
+          heightPt,
+          box: selectedBox.name
         };
-        const pageWidth = Math.round(widthPt * scale);
-        const pageHeight = Math.round(heightPt * scale);
-        pixmap = page.toPixmap(matrix, mupdf.ColorSpace.DeviceRGB, false, true);
+        const maxPixels = Math.min(extractionMaxPixels, MAX_EFFECTIVE_RENDER_PIXELS);
+        const renderSizing = options.targetWidthPx
+          ? fitMuPdfRenderSizingToWidth(widthPt, heightPt, options.targetWidthPx, { maxPixels })
+          : fitMuPdfRenderSizing(widthPt, heightPt, safeDpi, {
+              minDpi: extractionMinDpi,
+              maxDpi: extractionMaxDpi,
+              maxPixels
+            });
+        const scale = renderSizing.scale;
+        const pageWidth = renderSizing.widthPx;
+        const pageHeight = renderSizing.heightPx;
+        assertSafeRenderSize(originalPageIndex, pageWidth, pageHeight, renderSizing.dpi, selectedBox.name);
+        if (renderSizing.capped) {
+          console.warn(`[extractor] page ${originalPageIndex + 1} raster capped to ${renderSizing.dpi} DPI (${pageWidth}x${pageHeight}, ${renderSizing.pixelCount} px) to avoid MuPDF WASM memory exhaustion.`);
+          await logger?.warn("page.render-capped", { pageNumber: originalPageIndex + 1, chunkPageNumber: pageIndex + 1, dpi: renderSizing.dpi, widthPx: pageWidth, heightPx: pageHeight, pixelCount: renderSizing.pixelCount });
+        }
+        console.info(`[extractor] page ${originalPageIndex + 1}/${callbackPageCount}: rendering ${selectedBox.name} ${widthPt.toFixed(2)}x${heightPt.toFixed(2)}pt at ${renderSizing.dpi} DPI -> ${pageWidth}x${pageHeight}px`);
+        await logger?.info("page.render.start", {
+          pageNumber: originalPageIndex + 1,
+          chunkPageNumber: pageIndex + 1,
+          box: selectedBox.name,
+          widthPt,
+          heightPt,
+          dpi: renderSizing.dpi,
+          widthPx: pageWidth,
+          heightPx: pageHeight,
+          pixelCount: renderSizing.pixelCount,
+          targetWidthPx: options.targetWidthPx,
+          memory: process.memoryUsage()
+        });
+        const matrix = mupdf.Matrix.scale(scale, scale);
+        try {
+          pixmap = pageToPixmap(page, matrix, mupdf.ColorSpace.DeviceRGB, selectedBox.name);
+        } catch (error) {
+          await logger?.error("page.render.error", error, { pageNumber: originalPageIndex + 1, chunkPageNumber: pageIndex + 1, dpi: renderSizing.dpi, widthPx: pageWidth, heightPx: pageHeight });
+          throw new Error(`MuPDF rasterization failed on page ${originalPageIndex + 1} at ${renderSizing.dpi} DPI (${pageWidth}x${pageHeight}). Lower EXTRACT_MAX_PIXELS or EXTRACT_MAX_DPI. ${error instanceof Error ? error.message : String(error)}`);
+        }
+        console.info(`[extractor] page ${originalPageIndex + 1}/${callbackPageCount}: encoding PNG`);
+        await logger?.info("page.png.start", { pageNumber: originalPageIndex + 1, chunkPageNumber: pageIndex + 1, memory: process.memoryUsage() });
         const imageBytes = new Uint8Array(pixmap.asPNG());
+        await logger?.info("page.png.done", { pageNumber: originalPageIndex + 1, chunkPageNumber: pageIndex + 1, imageBytes: imageBytes.byteLength, memory: process.memoryUsage() });
+        console.info(`[extractor] page ${originalPageIndex + 1}/${callbackPageCount}: reading structured text`);
+        await logger?.info("page.structured-text.start", { pageNumber: originalPageIndex + 1, chunkPageNumber: pageIndex + 1, memory: process.memoryUsage() });
         structured = page.toStructuredText("preserve-whitespace,preserve-spans");
+        await logger?.info("page.structured-text.done", { pageNumber: originalPageIndex + 1, chunkPageNumber: pageIndex + 1, memory: process.memoryUsage() });
+        console.info(`[extractor] page ${originalPageIndex + 1}/${callbackPageCount}: parsing structured text`);
         const html = structured.asHTML(0);
         const htmlRuns = parseHtmlSpanRuns(html);
         const rotationHints = collectRotationHints(structured);
-        const reviewWords = collectReviewWords(structured, profile, scale);
+        const reviewWords = collectReviewWords(structured, profile, scale, bounds[0], bounds[1]);
         let runIndex = 0;
         const json = JSON.parse(structured.asJSON(1)) as StructuredPageJson;
         const spans: ExtractorSpan[] = [];
@@ -731,8 +866,8 @@ async function extractWithMuPdf(
             if (rawColor === null && bestFallback) rawColor = bestFallback.color;
             const rotation = findLineRotation(rotationHints, line.text ?? "", line.x, line.y);
             spans.push({
-              x: (bbox.x * scale) + profile.coordOffsetX,
-              y: (bbox.y * scale) + profile.coordOffsetY,
+              x: ((bbox.x - bounds[0]) * scale) + profile.coordOffsetX,
+              y: ((bbox.y - bounds[1]) * scale) + profile.coordOffsetY,
               w: bbox.w * scale,
               h: bbox.h * scale,
               text,
@@ -740,30 +875,43 @@ async function extractWithMuPdf(
               fontName,
               fontColor: sanitizeColor(rawColor ?? "#000000"),
               rotation,
-              pageIndex,
+              pageIndex: originalPageIndex,
               fontWeight: /bold|black|heavy/i.test(fontName) ? "bold" : "normal"
             });
           }
         }
-        const extracted = { pageIndex, pageWidth, pageHeight, pdfPageBounds, renderDpi: scale * 72, scale, leftMarginPx: detectLeftMarginPx(spans), spans, reviewWords, imageBytes };
+        const extracted = { pageIndex: originalPageIndex, pageWidth, pageHeight, pdfPageBounds, renderDpi: renderSizing.dpi, scale, leftMarginPx: detectLeftMarginPx(spans), spans, reviewWords, imageBytes };
         if (onPage) {
-          await onPage(extracted, pageCount);
+          await onPage(extracted, callbackPageCount);
         } else {
           pages.push(extracted);
         }
+        await logger?.info("page.done", { pageNumber: originalPageIndex + 1, chunkPageNumber: pageIndex + 1, spans: spans.length, reviewWords: reviewWords.length, memory: process.memoryUsage() });
+      } catch (error) {
+        await logger?.error("page.error", error, { pageNumber: pageIndex + pageIndexOffset + 1, chunkPageNumber: pageIndex + 1, memory: process.memoryUsage() });
+        throw error;
       } finally {
         destroyMuPdfObject(structured);
         destroyMuPdfObject(pixmap);
         destroyMuPdfObject(page);
+        (globalThis as { gc?: () => void }).gc?.();
       }
     }
     return pages;
-  } finally {
-    destroyMuPdfObject(document);
-  }
+    } finally {
+      destroyMuPdfObject(document);
+    }
+  });
 }
 
 async function extractFontsFromMuPdf(filePath: string, jobId: string): Promise<ExtractedFontAsset[]> {
+  const fileSize = await getFileSize(filePath);
+  if (isTooLargeForMuPdf(fileSize)) {
+    console.warn(
+      `[extractor] Skipping MuPDF font fallback for oversized PDF ${jobId}: ${Math.round(fileSize / 1024 / 1024)} MB`
+    );
+    return [];
+  }
   const mupdf = await importMuPdf();
   if (!mupdf) return [];
   const pdfBytes = await readFile(filePath);
@@ -910,6 +1058,35 @@ function buildCombinedReviewHtml(extracted: PageExtraction, profile: ExtractionP
   return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<link rel="stylesheet" href="${cssHref}">\n</head>\n<body>\n<div class="page">\n<img class="page__bg" src="${imageHref}" alt="">\n<div class="page__text">\n${elements}\n</div>\n</div>\n</body>\n</html>`;
 }
 
+function buildImageOnlyReviewHtml(extracted: PageExtraction, imageHref: string, cssHref: string): string {
+  const pageNumber = extracted.pageIndex + 1;
+  return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=${extracted.pageWidth}, height=${extracted.pageHeight}">\n<meta name="pdf-page-number" content="${pageNumber}">\n<meta name="pdf-page-width" content="${extracted.pageWidth}">\n<meta name="pdf-page-height" content="${extracted.pageHeight}">\n<meta name="pdf-page-scale" content="${Number(extracted.scale.toFixed(6))}">\n<link rel="stylesheet" href="${cssHref}">\n</head>\n<body>\n<div class="page">\n<img class="page__bg" src="${imageHref}" alt="">\n</div>\n</body>\n</html>`;
+}
+
+function buildImageOnlyReviewCss(extracted: PageExtraction): string {
+  return `html, body { margin: 0; padding: 0; background: transparent; }\n.page { position: relative; width: ${extracted.pageWidth}px; height: ${extracted.pageHeight}px; overflow: hidden; background: #fff; }\n.page__bg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; z-index: 0; pointer-events: none; }`;
+}
+
+function buildAccessibilityTaggingPageArtifacts(jobId: string, extracted: PageExtraction, profile: ExtractionProfile, blocks: TextBlock[]) {
+  const filtered = filterBlocks(applyParagraphStyles(blocks, profile, extracted.leftMarginPx));
+  const page: PageResult = {
+    pageIndex: extracted.pageIndex,
+    imageUrl: `/api/jobs/${jobId}/pages/${extracted.pageIndex}/image`,
+    htmlContent: "",
+    blocks: filtered,
+    confidence: validatePage(filtered, profile, extracted.pageWidth, extracted.pageHeight),
+    pageWidth: extracted.pageWidth,
+    pageHeight: extracted.pageHeight,
+    pdfPageBounds: extracted.pdfPageBounds,
+    renderDpi: extracted.renderDpi,
+    leftMarginPx: extracted.leftMarginPx,
+    reviewStatus: "unvisited"
+  };
+  const pageNumber = extracted.pageIndex + 1;
+  const reviewHtml = buildImageOnlyReviewHtml(extracted, `../images/page-${pageNumber}.png`, `../style/page-${pageNumber}.css`);
+  return { page, reviewHtml, reviewCssContent: buildImageOnlyReviewCss(extracted) };
+}
+
 function buildPageArtifacts(jobId: string, extracted: PageExtraction, profile: ExtractionProfile, blocks: TextBlock[], fontAssets: ExtractedFontAsset[]) {
   const filtered = filterBlocks(applyParagraphStyles(blocks, profile, extracted.leftMarginPx));
   const browserSafeFonts = fontAssets.filter((font) => isBrowserSafeFontFormat(font.format));
@@ -962,23 +1139,170 @@ async function completeSourceManifest(job: StoredJobState, pages: ImportedPageMa
   });
 }
 
-export async function extractPDF(job: StoredJobState, profile: ExtractionProfile, dpi = 150, options: { enableOcrValidation?: boolean } = {}): Promise<void> {
-  void options; // OCR disabled for now.
+async function extractLargePdfInChunks(job: StoredJobState, profile: ExtractionProfile, dpi: number, logger: JobLogger): Promise<void> {
+  await logger.info("large-pdf.split-flow.start", { pagesPerChunk: largePdfPagesPerChunk, maxChunkBytes: mupdfMaxInputBytes });
+  const splitManifest = await splitPdfWithPdfBox(job.id, job.filePath, largePdfPagesPerChunk);
+  const oversizedChunks = splitManifest.chunks.filter((chunk) => isTooLargeForMuPdf(chunk.sizeBytes));
+  if (oversizedChunks.length) {
+    throw new Error(
+      `PDFBox split produced ${oversizedChunks.length} chunk(s) still too large for MuPDF WASM. Largest chunk is ${Math.round(Math.max(...oversizedChunks.map((chunk) => chunk.sizeBytes)) / 1024 / 1024)} MB. Lower LARGE_PDF_PAGES_PER_CHUNK or use native extraction.`
+    );
+  }
+
+  await jobStore.updateJob(job.id, { pageCount: splitManifest.pageCount });
+  await logger.info("font-extraction.start", { source: "large-pdf-original" });
+  const fontManifest = await extractFontManifest(job.filePath, job.id);
+  await logger.info("font-extraction.done", { fonts: fontManifest.fonts.length });
+
+  const sourcePages: ImportedPageManifest[] = [];
+  for (const chunk of splitManifest.chunks) {
+    const chunkPath = path.join(jobStore.getJobDir(job.id), "optimized", "chunks", chunk.fileName);
+    await logger.info("large-pdf.chunk.start", {
+      chunkIndex: chunk.chunkIndex,
+      startPage: chunk.startPage,
+      endPage: chunk.endPage,
+      pageCount: chunk.pageCount,
+      sizeBytes: chunk.sizeBytes
+    });
+    await extractWithMuPdf(
+      chunkPath,
+      profile,
+      dpi,
+      async (extracted) => {
+        const merged = mergeSpans(extracted.spans, profile, extracted.leftMarginPx);
+        const classified = applyClassifierResults(
+          merged,
+          await classifyBlocks(merged, { pageWidth: extracted.pageWidth, pageHeight: extracted.pageHeight } as PageResult),
+          extracted.pageWidth,
+          profile
+        );
+        const built = buildPageArtifacts(job.id, extracted, profile, classified, fontManifest.fonts);
+        await jobStore.savePageArtifacts(
+          job.id,
+          extracted.pageIndex,
+          {
+            page: built.page,
+            reviewHtmlContent: built.reviewHtml,
+            reviewCssContent: built.reviewCssContent
+          },
+          extracted.imageBytes
+        );
+        sourcePages.push({
+          pageIndex: extracted.pageIndex,
+          sourcePath: `source.pdf#page=${extracted.pageIndex + 1}`,
+          reviewPath: `review/page-${extracted.pageIndex + 1}.html`,
+          width: extracted.pageWidth,
+          height: extracted.pageHeight
+        });
+        await jobStore.updateJob(job.id, { processedPages: extracted.pageIndex + 1 });
+        await logger.info("large-pdf.page.saved", { pageNumber: extracted.pageIndex + 1, chunkIndex: chunk.chunkIndex, blocks: built.page.blocks.length });
+      },
+      logger,
+      { pageIndexOffset: chunk.startPage - 1, totalPageCount: splitManifest.pageCount, targetWidthPx: job.targetWidthPx }
+    );
+    await logger.info("large-pdf.chunk.done", { chunkIndex: chunk.chunkIndex });
+  }
+
+  sourcePages.sort((left, right) => left.pageIndex - right.pageIndex);
+  await completeSourceManifest(job, sourcePages);
+  await jobStore.updateJob(job.id, { status: ExtractionStatus.done, pageCount: splitManifest.pageCount, processedPages: splitManifest.pageCount });
+  await logger.info("large-pdf.split-flow.done", { pageCount: splitManifest.pageCount, chunks: splitManifest.chunks.length });
+}
+
+export async function extractPDFForAccessibilityTagging(job: StoredJobState, profile: ExtractionProfile, dpi = 150): Promise<void> {
+  const logger = createJobLogger(job.id);
+  await logger.info("accessibility-extraction.start", { dpi, filePath: job.filePath });
   await jobStore.markActive(job.id);
   await jobStore.updateJob(job.id, { status: ExtractionStatus.processing, processedPages: 0, dpi });
   const sourcePages: ImportedPageManifest[] = [];
   try {
+    await assertMuPdfInputSize(job.filePath, logger);
+    let pageCount = 0;
+    await extractWithMuPdf(job.filePath, profile, dpi, async (extracted, totalPages) => {
+      if (pageCount === 0) {
+        pageCount = totalPages;
+        await jobStore.updateJob(job.id, { pageCount });
+      }
+      const merged = mergeSpans(extracted.spans, profile, extracted.leftMarginPx);
+      const classified = applyClassifierResults(
+        merged,
+        await classifyBlocks(merged, { pageWidth: extracted.pageWidth, pageHeight: extracted.pageHeight } as PageResult),
+        extracted.pageWidth,
+        profile
+      );
+      const built = buildAccessibilityTaggingPageArtifacts(job.id, extracted, profile, classified);
+      await jobStore.savePageArtifacts(
+        job.id,
+        extracted.pageIndex,
+        {
+          page: built.page,
+          reviewHtmlContent: built.reviewHtml,
+          reviewCssContent: built.reviewCssContent
+        },
+        extracted.imageBytes
+      );
+      sourcePages.push({
+        pageIndex: extracted.pageIndex,
+        sourcePath: `source.pdf#page=${extracted.pageIndex + 1}`,
+        reviewPath: `review/page-${extracted.pageIndex + 1}.html`,
+        width: extracted.pageWidth,
+        height: extracted.pageHeight
+      });
+      await jobStore.updateJob(job.id, { processedPages: extracted.pageIndex + 1 });
+      await logger.info("accessibility-page.saved", { pageNumber: extracted.pageIndex + 1, blocks: built.page.blocks.length });
+    }, logger, { targetWidthPx: job.targetWidthPx });
+    await completeSourceManifest(job, sourcePages);
+    await jobStore.updateJob(job.id, { status: ExtractionStatus.done, pageCount });
+    await logger.info("accessibility-extraction.done", { pageCount });
+  } catch (error) {
+    await logger.error("accessibility-extraction.error", error);
+    const manifest = await jobStore.getSourceManifest(job.id);
+    if (manifest) {
+      await jobStore.saveSourceManifest(job.id, {
+        ...manifest,
+        status: "failed",
+        warnings: [...manifest.warnings, error instanceof Error ? error.message : "Extraction failed"],
+        updatedAt: new Date().toISOString()
+      });
+    }
+    await jobStore.updateJob(job.id, {
+      status: ExtractionStatus.failed,
+      errorMessage: error instanceof Error ? error.message : "Extraction failed"
+    });
+    throw error;
+  } finally {
+    await jobStore.markInactive(job.id);
+  }
+}
+
+export async function extractPDF(job: StoredJobState, profile: ExtractionProfile, dpi = 150, options: { enableOcrValidation?: boolean } = {}): Promise<void> {
+  void options; // OCR disabled for now.
+  const logger = createJobLogger(job.id);
+  await logger.info("extraction.start", { dpi, filePath: job.filePath, workflow: job.workflow });
+  await jobStore.markActive(job.id);
+  await jobStore.updateJob(job.id, { status: ExtractionStatus.processing, processedPages: 0, dpi });
+  const sourcePages: ImportedPageManifest[] = [];
+  try {
+    const sourceSize = await getFileSize(job.filePath);
+    await logger.info("pdf.preflight", { sourceSize, mupdfMaxInputBytes });
+    if (isTooLargeForMuPdf(sourceSize)) {
+      await extractLargePdfInChunks(job, profile, dpi, logger);
+      return;
+    }
     let pdf2htmlExReady = false;
     if (isPdf2HtmlExEnabled()) {
       try {
+        await logger.info("pdf2htmlEX.start");
         await runPdf2HtmlEx(job.filePath, jobStore.getPdf2HtmlExDir(job.id));
         activeEngine = "pdf2htmlEX";
         pdf2htmlExReady = true;
         const warnings = await validatePdf2HtmlExOutput(jobStore.getPdf2HtmlExDir(job.id));
         await jobStore.updateJob(job.id, { hasPdf2HtmlEx: true, pdf2htmlExWarnings: warnings });
+        await logger.info("pdf2htmlEX.done", { warnings });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.warn("[extractor] pdf2htmlEX failed, falling back to built HTML:", error);
+        await logger.error("pdf2htmlEX.error", error);
         await jobStore.updateJob(job.id, {
           hasPdf2HtmlEx: false,
           pdf2htmlExWarnings: [`pdf2htmlEX conversion failed; using fallback extractor output.`, message]
@@ -1004,13 +1328,17 @@ export async function extractPDF(job: StoredJobState, profile: ExtractionProfile
           height: extracted.pageHeight
         });
         await jobStore.updateJob(job.id, { processedPages: extracted.pageIndex + 1 });
-      });
+        await logger.info("pdf2htmlEX-page.saved", { pageNumber: extracted.pageIndex + 1, width: extracted.pageWidth, height: extracted.pageHeight });
+      }, logger, { targetWidthPx: job.targetWidthPx });
       await completeSourceManifest(job, sourcePages);
       await jobStore.updateJob(job.id, { status: ExtractionStatus.done, pageCount });
+      await logger.info("extraction.done", { pageCount, engine: "pdf2htmlEX" });
       return;
     }
 
+    await logger.info("font-extraction.start");
     const fontManifest = await extractFontManifest(job.filePath, job.id);
+    await logger.info("font-extraction.done", { fonts: fontManifest.fonts.length });
     let pageCount = 0;
     await extractWithMuPdf(job.filePath, profile, dpi, async (extracted, totalPages) => {
       if (pageCount === 0) {
@@ -1044,13 +1372,16 @@ export async function extractPDF(job: StoredJobState, profile: ExtractionProfile
       });
 
       await jobStore.updateJob(job.id, { processedPages: extracted.pageIndex + 1 });
-    });
+      await logger.info("page.artifacts.saved", { pageNumber: extracted.pageIndex + 1, blocks: built.page.blocks.length, width: extracted.pageWidth, height: extracted.pageHeight });
+    }, logger, { targetWidthPx: job.targetWidthPx });
     // If pdf2htmlEX was enabled and succeeded, it is already available for the review UI
     // under /storage/jobs/<jobId>/pdf2htmlex/page-<n>.html.
     void pdf2htmlExReady;
     await completeSourceManifest(job, sourcePages);
     await jobStore.updateJob(job.id, { status: ExtractionStatus.done, pageCount });
+    await logger.info("extraction.done", { pageCount, engine: "mupdf" });
   } catch (error) {
+    await logger.error("extraction.error", error);
     const manifest = await jobStore.getSourceManifest(job.id);
     if (manifest) {
       await jobStore.saveSourceManifest(job.id, {

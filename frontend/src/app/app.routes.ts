@@ -10,6 +10,7 @@ import { HomeComponent } from "./pages/home/home.component";
 export const appRoutes: Routes = [
   { path: "", component: HomeComponent },
   { path: "upload-pdf", component: UploadComponent },
+  { path: "upload-tagging", component: UploadComponent, data: { workflow: "accessibility-tagging" } },
   { path: "upload-archive", component: ArchiveUploadComponent },
   { path: "archive/:jobId", component: ArchiveBookComponent },
   { path: "review/:jobId", component: ReviewComponent },

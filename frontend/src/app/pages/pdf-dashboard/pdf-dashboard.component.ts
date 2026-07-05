@@ -48,14 +48,16 @@ export class PdfDashboardComponent {
   }
 
   canDownloadBuilds(item: JobListItem): boolean {
-    return item.job.status === "done";
+    return item.job.status === "done" && item.job.workflow !== "accessibility-tagging";
   }
 
   openLabel(item: JobListItem): string {
+    if (item.job.workflow === "accessibility-tagging") return "Open tagging";
     return item.job.sourceType === "epub" || item.job.sourceType === "html-zip" ? "Open zoning" : "Open review";
   }
 
   sourceLabel(item: JobListItem): string {
+    if (item.job.workflow === "accessibility-tagging") return "PDF TAG";
     if (item.job.sourceType === "epub") return "EPUB";
     if (item.job.sourceType === "html-zip") return "HTML ZIP";
     return "PDF";

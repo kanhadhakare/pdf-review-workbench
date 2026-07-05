@@ -18,6 +18,13 @@
       <span class="workflow-action">Upload PDF <b>→</b></span>
     </a>
 
+    <a class="workflow-card workflow-card--tagging" routerLink="/upload-tagging">
+      <div class="workflow-card__top"><span class="workflow-icon">TAG</span><span class="workflow-status">Accessibility workflow</span></div>
+      <div><h2>PDF accessibility tagging</h2><p>Prepare a PDF for accessibility tagging review without showing zoning or final XHTML tools.</p></div>
+      <ul><li>Tagging-only workspace</li><li>Reading-order review</li><li>PDF/UA data preparation</li></ul>
+      <span class="workflow-action">Upload for tagging <b>→</b></span>
+    </a>
+
     <a class="workflow-card workflow-card--archive" routerLink="/upload-archive">
       <div class="workflow-card__top"><span class="workflow-icon">ZIP</span><span class="workflow-status">Import workflow</span></div>
       <div><h2>Use existing EPUB/XHTML</h2><p>Import pages produced by another tool without running PDF extraction again.</p></div>
@@ -28,6 +35,6 @@
 
   <section class="workflow-map">
     <strong>One workspace, separate stages</strong>
-    <div><span>1. Import</span><i></i><span>2. Configure</span><i></i><span>3. Review &amp; zone</span><i></i><span>4. Export</span></div>
+    <div><span>1. Import</span><i></i><span>2. Configure</span><i></i><span>3. Review &amp; zone/tag</span><i></i><span>4. Export</span></div>
   </section>
 </main>

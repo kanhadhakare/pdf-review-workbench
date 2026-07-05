@@ -4,7 +4,7 @@
     <div class="panel__hero">
       <p class="eyebrow">Existing book workflow</p>
       <h1>Import XHTML Book</h1>
-      <p class="subtitle">Import pages produced by another tool. Your source package remains unchanged and all later work happens in an isolated copy.</p>
+      <p class="subtitle">Upload an EPUB or XHTML ZIP as-is. No text cleanup, Unicode conversion or layout changes are applied unless you open advanced options.</p>
     </div>
 
     <div class="drop-zone archive-drop-zone">
@@ -17,12 +17,16 @@
     </div>
 
     <div class="archive-notes">
-      <strong>This step imports, validates and optionally prepares text</strong>
-      <span>Preserve mode is non-destructive. Cleanup modes create a separate review copy for zoning while keeping the original extracted source intact.</span>
+      <strong>Default import: no changes</strong>
+      <span>The archive is copied into the job and loaded for zoning. Source XHTML, CSS, fonts and images are preserved.</span>
     </div>
 
-    <section class="import-config" aria-labelledby="import-config-title">
-      <div class="import-config__heading"><span>2</span><div><h2 id="import-config-title">Configure this import</h2><p>These settings are saved with the project and can be reviewed later.</p></div></div>
+    <button type="button" class="advanced-toggle" (click)="toggleAdvancedOptions()">
+      {{ showAdvancedOptions() ? 'Hide advanced import settings' : 'Advanced import settings' }}
+    </button>
+
+    <section class="import-config" aria-labelledby="import-config-title" *ngIf="showAdvancedOptions()">
+      <div class="import-config__heading"><span>2</span><div><h2 id="import-config-title">Advanced import settings</h2><p>Use only when you intentionally want to inspect metadata or create a cleanup copy.</p></div></div>
 
       <fieldset class="purpose-options">
         <legend>What do you want to do?</legend>
@@ -55,7 +59,7 @@
 
     <div class="panel__actions">
       <a class="secondary" routerLink="/">Change workflow</a>
-      <button type="button" class="primary" (click)="submit()" [disabled]="!selectedFile() || busy() || (languageMode() === 'manual' && !language().trim())">{{ busy() ? 'Importing...' : 'Import with settings' }}</button>
+      <button type="button" class="primary" (click)="submit()" [disabled]="!selectedFile() || busy() || (showAdvancedOptions() && languageMode() === 'manual' && !language().trim())">{{ busy() ? 'Importing...' : 'Upload as-is' }}</button>
     </div>
 
     <div class="status-card">

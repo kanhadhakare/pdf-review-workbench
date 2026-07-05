@@ -120,12 +120,19 @@ h1 {
   font-size: 0.9rem;
 }
 
-input[type="text"] {
+input[type="text"],
+input[type="number"] {
   width: 100%;
   padding: 12px 14px;
   border: 1px solid var(--border);
   background: #141823;
   color: var(--text);
+}
+
+.hint {
+  margin: -4px 0 0;
+  color: var(--text-dim);
+  font-size: 0.85rem;
 }
 
 .panel__actions {

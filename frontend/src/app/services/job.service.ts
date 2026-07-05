@@ -1,6 +1,6 @@
 import { HttpClient } from "@angular/common/http";
 import { Injectable, inject } from "@angular/core";
-import { type ArchiveImportOptions, type ExtractionJob, type ImportedBookManifest, type JobEditSummary, type JobListItem, type PageResult, type ResumeInfo, type TrainingStatus } from "../types";
+import { type ArchiveImportOptions, type ExtractionJob, type ImportedBookManifest, type JobEditSummary, type JobListItem, type JobWorkflow, type PageResult, type ResumeInfo, type TrainingStatus } from "../types";
 import { Observable, interval, timer } from "rxjs";
 import { exhaustMap, retry, shareReplay, startWith, takeWhile } from "rxjs/operators";
 
@@ -8,16 +8,18 @@ import { exhaustMap, retry, shareReplay, startWith, takeWhile } from "rxjs/opera
 export class JobService {
   private readonly http = inject(HttpClient);
 
-  createJob(file: File | null, localPath: string | null, enableOcrValidation = false): Observable<{ job: ExtractionJob; editSummary: JobEditSummary; warning?: "large_file" }> {
+  createJob(file: File | null, localPath: string | null, enableOcrValidation = false, workflow: JobWorkflow = "zoning", targetWidthPx?: number | null): Observable<{ job: ExtractionJob; editSummary: JobEditSummary; warning?: "large_file" }> {
     if (file) {
       const form = new FormData();
       form.append("file", file, file.name);
       void enableOcrValidation; // OCR disabled for now.
       form.append("enableOcrValidation", "false");
+      form.append("workflow", workflow);
+      if (targetWidthPx) form.append("targetWidthPx", String(targetWidthPx));
       return this.http.post<{ job: ExtractionJob; editSummary: JobEditSummary; warning?: "large_file" }>("/api/jobs", form);
     }
     void enableOcrValidation;
-    return this.http.post<{ job: ExtractionJob; editSummary: JobEditSummary; warning?: "large_file" }>("/api/jobs", { localPath, enableOcrValidation: false });
+    return this.http.post<{ job: ExtractionJob; editSummary: JobEditSummary; warning?: "large_file" }>("/api/jobs", { localPath, enableOcrValidation: false, workflow, targetWidthPx });
   }
 
   createArchiveJob(file: File, options: ArchiveImportOptions): Observable<{ job: ExtractionJob; manifest: ImportedBookManifest; editSummary: JobEditSummary; warning?: "large_file" }> {

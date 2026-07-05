@@ -20,6 +20,7 @@ export interface StoredJobState extends ExtractionJob {
   warning?: "large_file";
   hasPdf2HtmlEx?: boolean;
   pdf2htmlExWarnings?: string[];
+  targetWidthPx?: number;
 }
 
 const EMPTY_EDIT_SUMMARY = (jobId: string): JobEditSummary => ({
@@ -94,6 +95,7 @@ export class JobStore {
       ensureDir(this.getStylesDir(job.id)),
       ensureDir(this.getFontsDir(job.id)),
       ensureDir(this.getOcrDir(job.id)),
+      ensureDir(this.getAccessibilityDir(job.id)),
       ensureDir(this.getImportedDir(job.id))
     ]);
     await this.saveJob(job);
@@ -316,6 +318,9 @@ export class JobStore {
   getCropsDir(jobId: string): string { return path.join(this.getImagesDir(jobId), "crops"); }
   getFontManifestPath(jobId: string): string { return path.join(this.getFontsDir(jobId), "manifest.json"); }
   getOcrDir(jobId: string): string { return path.join(this.getJobDir(jobId), "ocr"); }
+  getAccessibilityDir(jobId: string): string { return path.join(this.getJobDir(jobId), "accessibility"); }
+  getAccessibilityMapPath(jobId: string): string { return path.join(this.getAccessibilityDir(jobId), "accessibility-map.json"); }
+  getAccessibilityValidationReportPath(jobId: string): string { return path.join(this.getAccessibilityDir(jobId), "validation-report.json"); }
   getImportedDir(jobId: string): string { return path.join(this.getJobDir(jobId), "imported"); }
   getSourceManifestPath(jobId: string): string { return path.join(this.getJobDir(jobId), "source-manifest.json"); }
   getImagesDir(jobId: string): string { return path.join(this.getJobDir(jobId), "images"); }

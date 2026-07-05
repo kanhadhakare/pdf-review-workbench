@@ -33,15 +33,23 @@ export const uploadsStorageRoot = path.join(storageRoot, "uploads");
 
 export const ocrScriptPath = resolvePath(process.env.OCR_SCRIPT ?? path.join(backendRoot, "src", "scripts", "paddle_ocr_runner.py"));
 export const pix2TextScriptPath = resolvePath(process.env.PIX2TEXT_SCRIPT ?? path.join(backendRoot, "src", "scripts", "pix2text_runner.py"));
+export const doclingLayoutScriptPath = resolvePath(process.env.DOCLING_LAYOUT_SCRIPT ?? path.join(backendRoot, "src", "scripts", "docling_layout_runner.py"));
 export const trainerScriptPath = resolvePath(process.env.TRAINER_SCRIPT ?? path.join(backendRoot, "src", "scripts", "train_classifiers.py"));
 export const pdfboxJarPath = resolvePath(process.env.PDFBOX_FONT_EXTRACTOR_JAR ?? path.join(backendRoot, "tools", "pdfbox-font-extractor", "target", "pdfbox-font-extractor.jar"));
+export const pdfboxPdfToolJarPath = resolvePath(process.env.PDFBOX_PDF_TOOL_JAR ?? path.join(backendRoot, "tools", "pdfbox-pdf-tool", "target", "pdfbox-pdf-tool.jar"));
 export const fontForgeScriptDir = resolvePath(process.env.FONTFORGE_SCRIPT_DIR ?? path.join(storageRoot, "fontforge"));
+export const accessibilityAutoDetectionEngine = (process.env.ACCESSIBILITY_AUTO_DETECTION_ENGINE ?? "docling").trim().toLowerCase();
 
 export const serverPort = Number.parseInt(process.env.PORT ?? "3000", 10) || 3000;
 export const extractionPageConcurrency = Math.max(1, Number.parseInt(process.env.EXTRACT_PAGE_CONCURRENCY ?? "1", 10) || 1);
 export const extractionMaxDpi = Math.max(72, Number.parseInt(process.env.EXTRACT_MAX_DPI ?? "150", 10) || 150);
+export const extractionMinDpi = Math.max(36, Number.parseInt(process.env.EXTRACT_MIN_DPI ?? "72", 10) || 72);
+export const extractionMaxPixels = Math.max(1_000_000, Number.parseInt(process.env.EXTRACT_MAX_PIXELS ?? "6000000", 10) || 6_000_000);
 export const finalOutputDpi = Math.max(72, Number.parseInt(process.env.FINAL_OUTPUT_DPI ?? "200", 10) || 200);
+export const finalMaxPixels = Math.max(1_000_000, Number.parseInt(process.env.FINAL_MAX_PIXELS ?? "9000000", 10) || 9_000_000);
 export const finalViewportDpi = Math.max(72, Number.parseFloat(process.env.FINAL_VIEWPORT_DPI ?? "96") || 96);
+export const mupdfMaxInputBytes = Math.max(50 * 1024 * 1024, Number.parseInt(process.env.MUPDF_MAX_INPUT_BYTES ?? String(512 * 1024 * 1024), 10) || 512 * 1024 * 1024);
+export const largePdfPagesPerChunk = Math.max(1, Number.parseInt(process.env.LARGE_PDF_PAGES_PER_CHUNK ?? "50", 10) || 50);
 
 export function getCorsOrigins(): string[] {
   const configured = splitCommaList(process.env.CORS_ORIGIN);

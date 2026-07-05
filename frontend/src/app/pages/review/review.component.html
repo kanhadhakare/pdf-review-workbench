@@ -7,6 +7,10 @@
     </div>
   </div>
   <aside class="review-page__nav" *ngIf="showPageNav()">
+    <div class="review-page__nav-header">
+      <strong>Pages</strong>
+      <button type="button" (click)="showPageNav.set(false)" [disabled]="!!blockingMessage()">Hide</button>
+    </div>
     <app-page-nav
       [pageCount]="pageCount()"
       [currentPageIndex]="pageIndex()"
@@ -15,62 +19,90 @@
       [draftPageMap]="draftPageMap()"
       (pageSelected)="selectPage($event)" />
   </aside>
+  <button class="review-page__nav-restore" *ngIf="!showPageNav()" type="button" (click)="showPageNav.set(true)" [disabled]="!!blockingMessage()">Show pages</button>
   <section class="review-page__main">
     <header class="toolbar">
       <a routerLink="/">Back</a>
       <strong>Page {{ pageIndex() + 1 }} of {{ pageCount() }}</strong>
       <button type="button" (click)="showStatsPopup.set(true)" [disabled]="!!blockingMessage()">Page Info</button>
-      <button *ngIf="!isArchiveSource()" type="button" (click)="openCorrectionPopup()" [disabled]="!!blockingMessage()">Span Correction</button>
-      <label class="mode-toggle">
+      <button *ngIf="!isArchiveSource() && !isTaggingWorkflow()" type="button" (click)="openCorrectionPopup()" [disabled]="!!blockingMessage()">Span Correction</button>
+      <span class="workflow-pill workflow-pill--tagging" *ngIf="isTaggingWorkflow()">Accessibility Tagging</span>
+      <ng-container *ngIf="isTaggingWorkflow()">
+        <select [ngModel]="activeAccessibilityTag()" (ngModelChange)="setActiveAccessibilityTag($event)" [disabled]="!!blockingMessage()">
+          <option value="H1">H1</option>
+          <option value="H2">H2</option>
+          <option value="H3">H3</option>
+          <option value="H4">H4</option>
+          <option value="H5">H5</option>
+          <option value="H6">H6</option>
+          <option value="P">P</option>
+          <option value="L">L</option>
+          <option value="LI">LI</option>
+          <option value="Table">Table</option>
+          <option value="TR">TR</option>
+          <option value="TH">TH</option>
+          <option value="TD">TD</option>
+          <option value="Figure">Figure</option>
+          <option value="Caption">Caption</option>
+          <option value="Formula">Formula</option>
+          <option value="Artifact">Artifact</option>
+        </select>
+        <button type="button" (click)="saveAccessibilityTags()" [disabled]="!hasAccessibilityTagChanges() || savingAccessibilityTags() || !!blockingMessage()">{{ savingAccessibilityTags() ? 'Saving...' : 'Save Tags' }}</button>
+        <button type="button" (click)="markAccessibilityPageReviewed()" [disabled]="(accessibilityReviewStatus() === 'reviewed' && !hasAccessibilityTagChanges()) || savingAccessibilityTags() || !!blockingMessage()">Mark Reviewed</button>
+        <button type="button" (click)="detectAccessibilityPage()" [disabled]="detectingAccessibilityTags() || !!blockingMessage()">Auto Detect Page</button>
+        <button type="button" (click)="detectAccessibilityBook()" [disabled]="detectingAccessibilityTags() || !!blockingMessage()">Auto Detect Book</button>
+        <button type="button" (click)="validateAccessibility()" [disabled]="validatingAccessibilityTags() || !!blockingMessage()">Validate</button>
+        <button type="button" (click)="exportTaggedPdf()" [disabled]="!!blockingMessage()">Export Tagged PDF</button>
+        <button type="button" (click)="deleteSelectedAccessibilityTag()" [disabled]="!selectedAccessibilityTagId() || !!blockingMessage()">Delete Tag</button>
+        <span class="toolbar-hint">Status: {{ accessibilityReviewStatus() }}</span>
+      </ng-container>
+      <label class="mode-toggle" *ngIf="!isTaggingWorkflow()">
         <input type="checkbox" [checked]="boxMode()" [disabled]="!!blockingMessage()" (change)="boxMode.set(!boxMode())">
         <span>Box mode</span>
       </label>
-      <label class="mode-toggle">
+      <!-- <label class="mode-toggle" *ngIf="!isTaggingWorkflow()">
         <input type="checkbox" [checked]="showFinalPane()" [disabled]="!!blockingMessage()" (change)="showFinalPane.set(!showFinalPane())">
         <span>Show final</span>
-      </label>
-      <label class="mode-toggle">
-        <input type="checkbox" [checked]="showPageNav()" [disabled]="!!blockingMessage()" (change)="showPageNav.set(!showPageNav())">
-        <span>Show pages</span>
-      </label>
-      <select [ngModel]="activeTag()" (ngModelChange)="setActiveTag($event)" [disabled]="!boxMode() || !!blockingMessage()">
+      </label> -->
+      <select *ngIf="!isTaggingWorkflow()" [ngModel]="activeTag()" (ngModelChange)="setActiveTag($event)" [disabled]="!boxMode() || !!blockingMessage()">
         <option value="p">p</option>
         <option value="h1">h1</option>
         <option value="h2">h2</option>
         <option value="h3">h3</option>
         <option value="caption">caption</option>
-        <option *ngIf="!isArchiveSource()" value="table">table crop</option>
+        <option value="table">{{ isArchiveSource() ? 'table' : 'table crop' }}</option>
         <option *ngIf="!isArchiveSource()" value="img">img crop</option>
         <option *ngIf="!isArchiveSource()" value="equation">equation</option>
       </select>
-      <label class="toolbar-select" *ngIf="isArchiveSource()">
-        <span>Final CSS</span>
-        <select [ngModel]="archiveFinalCssStrategy()" (ngModelChange)="archiveFinalCssStrategy.set($event)" [disabled]="!boxMode() || savingBoxes() || !!blockingMessage()">
-          <option value="factor-common-css">move common CSS to semantic parent</option>
-          <option value="preserve-child-css">semantic tag only, keep child CSS</option>
-        </select>
-      </label>
-      <button type="button" (click)="saveBoxes()" [disabled]="!boxMode() || !hasZoningOutputChanges() || savingBoxes() || !!blockingMessage()">{{ savingBoxes() ? 'Saving...' : 'Save Boxes' }}</button>
-      <button *ngIf="!isArchiveSource()" type="button" (click)="recognizeSelectedEquation()" [disabled]="!boxMode() || !selectedEquationBox() || recognizingEquation() || !!blockingMessage()">{{ recognizingEquation() ? 'Reading math...' : 'Read Equation' }}</button>
-      <button type="button" (click)="openFinalOutput()" [disabled]="!page() || !!blockingMessage()">Open Final</button>
-      <button type="button" (click)="deleteSelectedBox()" [disabled]="!boxMode() || !selectedBoxId() || !!blockingMessage()">Delete Box</button>
-      <ng-container *ngIf="boxMode() && !isArchiveSource()">
-        <span class="toolbar-hint">Table:</span>
-        <select
-          [ngModel]="selectedTableMode()"
-          (ngModelChange)="setSelectedTableMode($any($event))"
-          [disabled]="!selectedTableBox() || !!blockingMessage()"
-          title="Select a table crop box to enable semantic grid">
-          <option value="crop">table as crop</option>
-          <option value="semantic">semantic grid</option>
-        </select>
-        <button type="button" (click)="addTableColumn()" [disabled]="!selectedTableBox() || selectedTableMode() !== 'semantic' || !!blockingMessage()">Add column</button>
-        <button type="button" (click)="addTableRow()" [disabled]="!selectedTableBox() || selectedTableMode() !== 'semantic' || !!blockingMessage()">Add row</button>
-      </ng-container>
+      <button *ngIf="!isTaggingWorkflow()" type="button" (click)="saveBoxes()" [disabled]="!boxMode() || !hasZoningOutputChanges() || savingBoxes() || !!blockingMessage()">{{ savingBoxes() ? 'Saving...' : 'Save Boxes' }}</button>
+      <button *ngIf="!isArchiveSource() && !isTaggingWorkflow()" type="button" (click)="recognizeSelectedEquation()" [disabled]="!boxMode() || !selectedEquationBox() || recognizingEquation() || !!blockingMessage()">{{ recognizingEquation() ? 'Reading math...' : 'Read Equation' }}</button>
       <button type="button" (click)="previousPage()" [disabled]="pageIndex() === 0 || !!blockingMessage()">Previous</button>
       <button type="button" (click)="nextPage()" [disabled]="pageIndex() >= pageCount() - 1 || !!blockingMessage()">Next</button>
-      <a class="toolbar-download" [href]="reviewZipUrl()">Review ZIP</a>
-      <a class="toolbar-download" [href]="finalZipUrl()">Final ZIP</a>
+      <details class="toolbar-tools" *ngIf="!isTaggingWorkflow()">
+        <summary>Tools</summary>
+        <div class="toolbar-tools__panel">
+          <button type="button" (click)="openFinalOutput()" [disabled]="!page() || !!blockingMessage()">Open Final</button>
+          <button type="button" (click)="deleteSelectedBox()" [disabled]="!boxMode() || !selectedBoxId() || !!blockingMessage()">Delete Box</button>
+          <section class="toolbar-tools__group" *ngIf="boxMode()">
+            <strong>Table</strong>
+            <select
+              [ngModel]="selectedTableMode()"
+              (ngModelChange)="setSelectedTableMode($any($event))"
+              [disabled]="!selectedTableBox() || !!blockingMessage()"
+              title="Select a table crop box to enable semantic grid">
+              <option *ngIf="!isArchiveSource()" value="crop">table as crop</option>
+              <option value="semantic">semantic grid</option>
+            </select>
+            <button type="button" (click)="addTableColumn()" [disabled]="!selectedTableBox() || selectedTableMode() !== 'semantic' || !!blockingMessage()">Add column</button>
+            <button type="button" (click)="addTableRow()" [disabled]="!selectedTableBox() || selectedTableMode() !== 'semantic' || !!blockingMessage()">Add row</button>
+          </section>
+          <section class="toolbar-tools__group">
+            <strong>Downloads</strong>
+            <a class="toolbar-download" [href]="reviewZipUrl()">Review ZIP</a>
+            <a class="toolbar-download" [href]="finalZipUrl()">Final ZIP</a>
+          </section>
+        </div>
+      </details>
       <span class="equation-status" *ngIf="equationMessage()">{{ equationMessage() }}</span>
     </header>
 
@@ -85,6 +117,79 @@
         <button type="button" (click)="showArchiveZoningNotice.set(false)">Start zoning</button>
       </section>
     </div>
+
+    <section class="tagging-notice" *ngIf="isTaggingWorkflow()">
+      <strong>Accessibility Tagging mode</strong>
+      <span>This project is isolated from zoning/final XHTML tools. Auto-detected tags and PDF-tag export will use a separate accessibility data layer.</span>
+      <em *ngIf="accessibilityMessage()">{{ accessibilityMessage() }}</em>
+    </section>
+
+    <section class="accessibility-inspector" *ngIf="isTaggingWorkflow()">
+      <ng-container *ngIf="selectedAccessibilityTag() as tag; else noAccessibilityTagSelected">
+        <div class="accessibility-inspector__summary">
+          <strong>#{{ tag.readingOrder }} {{ tag.tag }}</strong>
+          <span>{{ tag.source }} · {{ tag.status }} · {{ tag.confidence | number:'1.2-2' }}</span>
+        </div>
+        <label>
+          Status
+          <select [ngModel]="tag.status" (ngModelChange)="updateSelectedAccessibilityTagStatus($event)" [disabled]="!!blockingMessage()">
+            <option value="suggested">suggested</option>
+            <option value="accepted">accepted</option>
+            <option value="needs-review">needs-review</option>
+          </select>
+        </label>
+        <label>
+          Language
+          <input type="text" [ngModel]="tag.language ?? ''" (ngModelChange)="updateSelectedAccessibilityTagText('language', $event)" placeholder="en, hi, es" [disabled]="!!blockingMessage()">
+        </label>
+        <label *ngIf="tag.tag === 'Figure'">
+          Alt text
+          <textarea [ngModel]="tag.altText ?? ''" (ngModelChange)="updateSelectedAccessibilityTagText('altText', $event)" placeholder="Describe the meaningful image content." [disabled]="!!blockingMessage()"></textarea>
+        </label>
+        <label *ngIf="tag.tag === 'Formula'">
+          ActualText
+          <textarea [ngModel]="tag.actualText ?? ''" (ngModelChange)="updateSelectedAccessibilityTagText('actualText', $event)" placeholder="Screen-reader text for the formula." [disabled]="!!blockingMessage()"></textarea>
+        </label>
+        <label *ngIf="tag.tag === 'Formula'">
+          LaTeX
+          <textarea [ngModel]="tag.formula?.latex ?? ''" (ngModelChange)="updateSelectedAccessibilityFormula('latex', $event)" placeholder="Optional LaTeX." [disabled]="!!blockingMessage()"></textarea>
+        </label>
+        <label *ngIf="tag.tag === 'Formula'">
+          MathML
+          <textarea [ngModel]="tag.formula?.mathml ?? ''" (ngModelChange)="updateSelectedAccessibilityFormula('mathml', $event)" placeholder="Optional MathML." [disabled]="!!blockingMessage()"></textarea>
+        </label>
+        <label *ngIf="tag.tag === 'Table'">
+          Rows
+          <input type="number" min="0" step="1" [ngModel]="tag.table?.rowCount ?? 0" (ngModelChange)="updateSelectedAccessibilityTable('rowCount', +$event)" [disabled]="!!blockingMessage()">
+        </label>
+        <label *ngIf="tag.tag === 'Table'">
+          Columns
+          <input type="number" min="0" step="1" [ngModel]="tag.table?.columnCount ?? 0" (ngModelChange)="updateSelectedAccessibilityTable('columnCount', +$event)" [disabled]="!!blockingMessage()">
+        </label>
+        <label *ngIf="tag.tag === 'Table'">
+          Header scope
+          <select [ngModel]="tag.table?.headerScope ?? 'none'" (ngModelChange)="updateSelectedAccessibilityTableScope($event)" [disabled]="!!blockingMessage()">
+            <option value="none">none</option>
+            <option value="row">row</option>
+            <option value="column">column</option>
+            <option value="both">both</option>
+          </select>
+        </label>
+      </ng-container>
+      <ng-template #noAccessibilityTagSelected>
+        <span>Select a tag box to edit alt text, formula text, table metadata, language, and status.</span>
+      </ng-template>
+      <div class="accessibility-report" *ngIf="accessibilityValidationReport() as report">
+        <strong>Validation: {{ report.status }}</strong>
+        <span>{{ report.errorCount }} errors · {{ report.warningCount }} warnings</span>
+        <ol>
+          <li *ngFor="let issue of report.issues.slice(0, 8)">
+            <b>{{ issue.severity }}</b>
+            <span>{{ issue.pageIndex === undefined ? 'Document' : 'Page ' + (issue.pageIndex + 1) }}: {{ issue.message }}</span>
+          </li>
+        </ol>
+      </div>
+    </section>
 
     <div class="review-popup" *ngIf="showStatsPopup()" (click)="showStatsPopup.set(false)">
       <section class="review-popup__card" (click)="$event.stopPropagation()">
@@ -168,6 +273,37 @@
           <div class="frame-stack" [style.width.px]="currentPage.pageWidth" [style.height.px]="currentPage.pageHeight" [style.transform]="transform()">
             <iframe #reviewIframe class="html-preview" [src]="reviewHtmlUrl()" scrolling="no" sandbox="allow-same-origin" (load)="onReviewIframeLoad($event)"></iframe>
             <div
+              *ngIf="isTaggingWorkflow()"
+              class="accessibility-overlay"
+              (mousedown)="accessibilityOverlayMouseDown($event)"
+              (mousemove)="accessibilityOverlayMouseMove($event)"
+              (mouseup)="accessibilityOverlayMouseUp($event)">
+              <div
+                *ngFor="let tag of accessibilityTags(); let i = index"
+                class="accessibility-tag"
+                [class.accessibility-tag--selected]="selectedAccessibilityTagId() === tag.id"
+                [class.accessibility-tag--suggested]="tag.status === 'suggested'"
+                [class.accessibility-tag--artifact]="tag.tag === 'Artifact'"
+                [style.left.px]="tag.bbox.x"
+                [style.top.px]="tag.bbox.y"
+                [style.width.px]="tag.bbox.w"
+                [style.height.px]="tag.bbox.h"
+                (mousedown)="accessibilityTagMouseDown($event, tag)">
+                <span class="accessibility-tag__label">
+                  <span>#{{ tag.readingOrder ?? (i + 1) }} {{ tag.tag }}</span>
+                  <button type="button" title="Move earlier" [disabled]="i === 0" (mousedown)="$event.stopPropagation()" (click)="moveAccessibilityTagOrder(tag.id, -1)">↑</button>
+                  <button type="button" title="Move later" [disabled]="i === accessibilityTags().length - 1" (mousedown)="$event.stopPropagation()" (click)="moveAccessibilityTagOrder(tag.id, 1)">↓</button>
+                </span>
+                <button type="button" class="accessibility-tag__delete" title="Delete tag" (mousedown)="$event.stopPropagation()" (click)="deleteAccessibilityTag(tag.id)">&times;</button>
+                <button type="button" class="resize-handle resize-handle--nw" title="Resize" (mousedown)="accessibilityTagResizeMouseDown($event, tag, 'nw')"></button>
+                <button type="button" class="resize-handle resize-handle--ne" title="Resize" (mousedown)="accessibilityTagResizeMouseDown($event, tag, 'ne')"></button>
+                <button type="button" class="resize-handle resize-handle--sw" title="Resize" (mousedown)="accessibilityTagResizeMouseDown($event, tag, 'sw')"></button>
+                <button type="button" class="resize-handle resize-handle--se" title="Resize" (mousedown)="accessibilityTagResizeMouseDown($event, tag, 'se')"></button>
+              </div>
+              <div *ngIf="drawingAccessibilityTag() as tag" class="accessibility-draw-tag" [style.left.px]="tag.x" [style.top.px]="tag.y" [style.width.px]="tag.w" [style.height.px]="tag.h"></div>
+            </div>
+            <div
+              *ngIf="!isTaggingWorkflow()"
               class="box-overlay"
               [class.is-active]="boxMode()"
               (mousedown)="overlayMouseDown($event)"

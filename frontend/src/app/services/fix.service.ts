@@ -19,8 +19,8 @@ export class FixService {
     return this.http.get<{ corrections: SpanCorrection[] }>(`/api/jobs/${jobId}/pages/${pageIndex}/span-corrections`);
   }
 
-  saveSpanCorrection(jobId: string, pageIndex: number, correction: Omit<SpanCorrection, "id" | "createdAt" | "updatedAt"> & Partial<Pick<SpanCorrection, "id">>): Observable<{ ok: true; corrections: SpanCorrection[]; affectedPages: number[] }> {
-    return this.http.put<{ ok: true; corrections: SpanCorrection[]; affectedPages: number[] }>(`/api/jobs/${jobId}/pages/${pageIndex}/span-corrections`, { correction });
+  saveSpanCorrection(jobId: string, pageIndex: number, correction: Omit<SpanCorrection, "id" | "createdAt" | "updatedAt"> & Partial<Pick<SpanCorrection, "id">>): Observable<{ ok: true; correctionCount: number; affectedPages: number[] }> {
+    return this.http.put<{ ok: true; correctionCount: number; affectedPages: number[] }>(`/api/jobs/${jobId}/pages/${pageIndex}/span-corrections`, { correction });
   }
 
   getBoxes(jobId: string, pageIndex: number): Observable<{ boxes: SemanticBox[]; archiveFinalCssStrategy?: ArchiveZoningCssStrategy }> {

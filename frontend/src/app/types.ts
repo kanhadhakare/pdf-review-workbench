@@ -10,6 +10,93 @@ export type SemanticTag = "h1" | "h2" | "h3" | "p" | "span" | "caption" | "table
 export type SemanticBoxTag = "p" | "h1" | "h2" | "h3" | "caption" | "table" | "img" | "equation";
 export type ArchiveZoningCssStrategy = "factor-common-css" | "preserve-child-css";
 
+export type AccessibilityTagName =
+  | "H1" | "H2" | "H3" | "H4" | "H5" | "H6"
+  | "P" | "L" | "LI"
+  | "Table" | "TR" | "TH" | "TD"
+  | "Figure" | "Caption" | "Formula" | "Artifact";
+
+export type AccessibilityTagSource = "manual" | "auto-detection";
+export type AccessibilityTagStatus = "suggested" | "accepted" | "needs-review";
+export type AccessibilityPageReviewStatus = "untagged" | "needs-review" | "reviewed";
+
+export interface AccessibilityTagBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface AccessibilityTag {
+  id: string;
+  pageIndex: number;
+  tag: AccessibilityTagName;
+  bbox: AccessibilityTagBox;
+  readingOrder: number;
+  confidence: number;
+  source: AccessibilityTagSource;
+  status: AccessibilityTagStatus;
+  altText?: string;
+  actualText?: string;
+  language?: string;
+  table?: {
+    rowCount?: number;
+    columnCount?: number;
+    headerScope?: "row" | "column" | "both" | "none";
+  };
+  formula?: {
+    latex?: string;
+    mathml?: string;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type AccessibilityIssueSeverity = "error" | "warning" | "info";
+
+export interface AccessibilityIssue {
+  id: string;
+  severity: AccessibilityIssueSeverity;
+  pageIndex?: number;
+  tagId?: string;
+  code: string;
+  message: string;
+}
+
+export interface AccessibilityValidationReport {
+  jobId: string;
+  status: "pass" | "needs-review" | "fail";
+  issueCount: number;
+  errorCount: number;
+  warningCount: number;
+  issues: AccessibilityIssue[];
+  generatedAt: string;
+}
+
+export interface AccessibilityPageMap {
+  pageIndex: number;
+  reviewStatus: AccessibilityPageReviewStatus;
+  tags: AccessibilityTag[];
+  updatedAt: string;
+}
+
+export interface AccessibilityDocumentMetadata {
+  title?: string;
+  language?: string;
+  subject?: string;
+  author?: string;
+  pdfUaTarget?: "PDF/UA-1" | "PDF/UA-2";
+}
+
+export interface AccessibilityMap {
+  version: 1;
+  jobId: string;
+  document: AccessibilityDocumentMetadata;
+  pages: Record<string, AccessibilityPageMap>;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface SemanticBox {
   id: string;
   tag: SemanticBoxTag;
@@ -57,6 +144,7 @@ export interface SemanticBox {
 }
 
 export type SourceType = "pdf" | "html-zip" | "epub";
+export type JobWorkflow = "zoning" | "accessibility-tagging";
 export type SourceLayout = "fixed" | "reflowable" | "unknown";
 export type ArchiveTextHandling = "preserve" | "audit" | "safe-cleanup" | "advanced-repair";
 export type UnicodeNormalizationMode = "none" | "nfc" | "nfkc";
@@ -199,7 +287,9 @@ export interface ExtractionJob {
   filePath: string;
   originalFileName: string;
   sourceType?: SourceType;
+  workflow?: JobWorkflow;
   enableOcrValidation?: boolean;
+  targetWidthPx?: number;
 }
 
 export interface PageResult {

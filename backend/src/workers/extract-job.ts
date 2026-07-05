@@ -1,5 +1,6 @@
-import { extractPDF } from "../services/extractor.js";
+import { extractPDF, extractPDFForAccessibilityTagging } from "../services/extractor.js";
 import { jobStore } from "../services/jobStore.js";
+import { createJobLogger } from "../services/jobLogger.js";
 import { loadProfile } from "../services/profileStore.js";
 import { ExtractionStatus } from "../types.js";
 
@@ -18,9 +19,18 @@ async function main(): Promise<void> {
   if (!job) {
     throw new Error(`Job ${jobId} not found`);
   }
+  const logger = createJobLogger(jobId);
+  await logger.info("worker.start", { dpi, workflow: job.workflow, originalFileName: job.originalFileName });
 
   const profile = await loadProfile(job.pdfFingerprint);
+  await logger.info("profile.loaded", { fingerprint: job.pdfFingerprint });
+  if (job.workflow === "accessibility-tagging") {
+    await extractPDFForAccessibilityTagging(job, profile, dpi);
+    await logger.info("worker.done");
+    return;
+  }
   await extractPDF(job, profile, dpi, { enableOcrValidation: Boolean(job.enableOcrValidation) });
+  await logger.info("worker.done");
 }
 
 void main()
@@ -32,6 +42,8 @@ void main()
     const message = error instanceof Error ? error.message : "Unknown extraction worker failure";
     console.error(`[extract-worker] ${message}`);
     if (jobId) {
+      const logger = createJobLogger(jobId);
+      await logger.error("worker.error", error);
       try {
         const job = await jobStore.getJob(jobId);
         if (job && job.status !== "done" && job.status !== "failed") {

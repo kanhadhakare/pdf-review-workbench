@@ -13,6 +13,11 @@ Push-Location "$root\backend"
 npm.cmd run build
 Pop-Location
 
+Write-Host "Building frontend..."
+Push-Location "$root\frontend"
+npm.cmd run build
+Pop-Location
+
 Write-Host "Starting backend, frontend, and protected gateway..."
 node "$root\scripts\start-public-stack.mjs"
 

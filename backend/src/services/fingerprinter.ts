@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
+import { mupdfMaxInputBytes } from "../config/runtime.js";
 import { destroyMuPdfObject } from "./mupdfLifecycle.js";
 
 type MuPdfModule = typeof import("mupdf");
@@ -13,7 +15,22 @@ async function importMuPdf(): Promise<MuPdfModule> {
 }
 function cleanFontName(fontName: string): string { return fontName.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64); }
 
+async function fingerprintLargePdf(filePath: string): Promise<string> {
+  const hash = createHash("sha256");
+  await new Promise<void>((resolve, reject) => {
+    const stream = createReadStream(filePath);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("error", reject);
+    stream.on("end", resolve);
+  });
+  return hash.digest("hex").slice(0, 16);
+}
+
 export async function fingerprintPdf(filePath: string): Promise<string> {
+  const info = await stat(filePath);
+  if (info.size > mupdfMaxInputBytes) {
+    return fingerprintLargePdf(filePath);
+  }
   const buffer = await readFile(filePath);
   const parts: string[] = [];
   const mupdf = await importMuPdf();

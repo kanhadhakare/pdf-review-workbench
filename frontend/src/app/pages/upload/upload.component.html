@@ -2,9 +2,13 @@
   <nav class="upload-nav"><a routerLink="/">← Workflows</a><a routerLink="/dashboard">Projects</a></nav>
   <section class="panel">
     <div class="panel__hero">
-      <p class="eyebrow">PDF extraction workflow</p>
-      <h1>Start from a PDF</h1>
-      <p class="subtitle">The workbench will extract page images, fonts and positioned text before opening the side-by-side zoning reader.</p>
+      <p class="eyebrow">{{ isTaggingUpload() ? 'PDF accessibility workflow' : 'PDF extraction workflow' }}</p>
+      <h1>{{ isTaggingUpload() ? 'Start PDF tagging' : 'Start from a PDF' }}</h1>
+      <p class="subtitle">
+        {{ isTaggingUpload()
+          ? 'The workbench will prepare the PDF pages for accessibility tagging review only. Zoning/final XHTML tools stay hidden for this upload.'
+          : 'The workbench will extract page images, fonts and positioned text before opening the side-by-side zoning reader.' }}
+      </p>
     </div>
 
     <label class="mode-toggle">
@@ -28,9 +32,15 @@
       </label>
     </ng-template>
 
+    <label class="path-field">
+      <span>Output page width px</span>
+      <input type="number" min="200" max="5000" step="1" [ngModel]="targetWidthPx()" (ngModelChange)="targetWidthPx.set($event ? +$event : null)" placeholder="807">
+    </label>
+    <p class="hint">Height is calculated from the PDF TrimBox aspect ratio. Use 807 for PDFTron-style output.</p>
+
     <div class="panel__actions">
       <a class="secondary" routerLink="/">Change workflow</a>
-      <button type="button" class="primary" (click)="submit()" [disabled]="!canSubmit()">{{ busy() ? 'Processing…' : 'Start Extraction' }}</button>
+      <button type="button" class="primary" (click)="submit()" [disabled]="!canSubmit()">{{ busy() ? 'Processing…' : (isTaggingUpload() ? 'Start Tagging Setup' : 'Start Extraction') }}</button>
     </div>
 
     <div class="status-card">

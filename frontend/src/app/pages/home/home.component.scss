@@ -8,13 +8,15 @@
 .eyebrow { margin: 0 0 14px; color: #7eb7f7; font: 600 12px/1 var(--font-mono); letter-spacing: .14em; text-transform: uppercase; }
 .hero h1 { margin: 0; font-size: clamp(2.6rem, 6vw, 4.8rem); line-height: .98; letter-spacing: -.055em; }
 .hero p:last-child { max-width: 650px; margin: 22px 0 0; color: var(--text-dim); font-size: 1.08rem; line-height: 1.65; }
-.workflow-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.workflow-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
 .workflow-card { min-height: 390px; display: flex; flex-direction: column; gap: 26px; padding: 28px; border: 1px solid rgba(255,255,255,.1); border-radius: 16px; color: var(--text); text-decoration: none; background: linear-gradient(155deg, rgba(32,39,53,.96), rgba(20,25,35,.96)); transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease; }
 .workflow-card:hover { transform: translateY(-4px); border-color: rgba(126,183,247,.5); box-shadow: 0 24px 70px rgba(0,0,0,.28); }
+.workflow-card--tagging { background: linear-gradient(155deg, rgba(33,48,44,.96), rgba(18,29,30,.96)); }
 .workflow-card--archive { background: linear-gradient(155deg, rgba(42,34,59,.96), rgba(22,22,35,.96)); }
 .workflow-card__top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .workflow-icon { width: 58px; height: 58px; display: grid; place-items: center; border-radius: 13px; background: rgba(74,144,226,.14); color: #8bc1ff; font: 700 13px/1 var(--font-mono); }
 .workflow-card--archive .workflow-icon { background: rgba(158,111,224,.15); color: #c6a5f5; }
+.workflow-card--tagging .workflow-icon { background: rgba(86,199,163,.15); color: #84e2c2; }
 .workflow-status { color: var(--text-dim); font-size: .78rem; text-transform: uppercase; letter-spacing: .1em; }
 .workflow-card h2 { margin: 0 0 10px; font-size: 1.65rem; letter-spacing: -.025em; }
 .workflow-card p { margin: 0; color: var(--text-dim); line-height: 1.6; }
@@ -25,4 +27,5 @@
 .workflow-map strong { display: block; margin-bottom: 16px; }
 .workflow-map div { display: flex; align-items: center; color: var(--text-dim); font-size: .88rem; }
 .workflow-map i { flex: 1; height: 1px; margin: 0 14px; background: var(--border); }
-@media (max-width: 760px) { .home-shell { width: min(100% - 28px, 1120px); } .hero { padding-top: 48px; } .workflow-grid { grid-template-columns: 1fr; } .workflow-card { min-height: 350px; } .workflow-map div { align-items: flex-start; flex-direction: column; gap: 10px; } .workflow-map i { display: none; } }
+@media (max-width: 980px) { .workflow-grid { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .home-shell { width: min(100% - 28px, 1120px); } .hero { padding-top: 48px; } .workflow-card { min-height: 350px; } .workflow-map div { align-items: flex-start; flex-direction: column; gap: 10px; } .workflow-map i { display: none; } }

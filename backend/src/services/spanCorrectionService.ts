@@ -6,6 +6,8 @@ import { jobStore } from "./jobStore.js";
 
 const OVERRIDE_START = "/* span-correction-overrides:start */";
 const OVERRIDE_END = "/* span-correction-overrides:end */";
+const BOOK_CORRECTION_CONCURRENCY = 12;
+const backgroundBookApplies = new Map<string, Promise<void>>();
 
 type WordRule = {
   pageIndex: number;
@@ -134,14 +136,37 @@ function matchesCorrection(rule: WordRule, correction: SpanCorrection): boolean 
     && fontStyle === correction.fontStyle.trim().toLowerCase();
 }
 
+function correctionCanAffectPage(correction: SpanCorrection, pageIndex: number): boolean {
+  if (correction.scope === "book-font-size") return true;
+  return correction.pageIndex === pageIndex;
+}
+
+function cssMayContainCorrection(css: string, correction: SpanCorrection): boolean {
+  if (correction.scope === "span") {
+    const className = normalizeClassName(correction.cssClassName);
+    return className ? css.includes(`.${className}`) : css.includes(`.page${correction.pageIndex + 1}__word${correction.wordIndex}`);
+  }
+  return css.includes("font-family")
+    && css.includes("font-size")
+    && css.includes(correction.fontSizePx.toString())
+    && css.toLowerCase().includes(correction.fontStyle.trim().toLowerCase());
+}
+
+function cssMayContainAnyCorrection(css: string, corrections: SpanCorrection[]): boolean {
+  return corrections.some((correction) => cssMayContainCorrection(css, correction));
+}
+
 function buildOverrideRules(pageIndex: number, baseCss: string, corrections: SpanCorrection[]): string[] {
+  const pageCorrections = corrections.filter((correction) => correctionCanAffectPage(correction, pageIndex));
+  if (pageCorrections.length === 0) return [];
+  if (!cssMayContainAnyCorrection(baseCss, pageCorrections)) return [];
   const rules = parseWordRules(pageIndex, baseCss);
   const overrides: string[] = [];
   for (const rule of rules) {
     let topDelta = 0;
     let leftDelta = 0;
     let letterSpacingPx: number | null = null;
-    for (const correction of corrections) {
+    for (const correction of pageCorrections) {
       if (!matchesCorrection(rule, correction)) continue;
       topDelta += correction.topDeltaPx;
       leftDelta += correction.leftDeltaPx;
@@ -162,12 +187,49 @@ function buildOverrideRules(pageIndex: number, baseCss: string, corrections: Spa
   return overrides;
 }
 
+async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(1, concurrency), items.length);
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= items.length) return;
+      results[index] = await mapper(items[index]);
+    }
+  }));
+  return results;
+}
+
 export async function getSpanCorrections(jobId: string): Promise<SpanCorrection[]> {
   const payload = await readJson<{ corrections?: SpanCorrection[] }>(correctionsPath(jobId), { corrections: [] });
   return Array.isArray(payload.corrections) ? payload.corrections : [];
 }
 
-export async function saveSpanCorrection(jobId: string, input: Omit<SpanCorrection, "id" | "createdAt" | "updatedAt"> & Partial<Pick<SpanCorrection, "id">>): Promise<{ corrections: SpanCorrection[]; affectedPages: number[] }> {
+function pagesAffectedByCorrection(correction: SpanCorrection, previousCorrection?: SpanCorrection): Set<number> | null {
+  if (previousCorrection?.scope === "book-font-size") return null;
+  const pages = new Set([correction.pageIndex]);
+  if (previousCorrection) pages.add(previousCorrection.pageIndex);
+  return pages;
+}
+
+function queueBookCorrectionApply(jobId: string, corrections: SpanCorrection[]): void {
+  const previous = backgroundBookApplies.get(jobId) ?? Promise.resolve();
+  const next = previous
+    .catch(() => void 0)
+    .then(async () => {
+      await applySpanCorrections(jobId, corrections, null);
+    })
+    .catch((error) => {
+      console.warn(`[span-corrections] background book apply failed for ${jobId}:`, error);
+    })
+    .finally(() => {
+      if (backgroundBookApplies.get(jobId) === next) backgroundBookApplies.delete(jobId);
+    });
+  backgroundBookApplies.set(jobId, next);
+}
+
+export async function saveSpanCorrection(jobId: string, input: Omit<SpanCorrection, "id" | "createdAt" | "updatedAt"> & Partial<Pick<SpanCorrection, "id">>): Promise<{ correctionCount: number; affectedPages: number[] }> {
   const existing = await getSpanCorrections(jobId);
   const now = new Date().toISOString();
   const inputKey = correctionKey(input);
@@ -194,18 +256,31 @@ export async function saveSpanCorrection(jobId: string, input: Omit<SpanCorrecti
     nextCorrection
   ];
   await writeJson(correctionsPath(jobId), { corrections });
-  const affectedPages = await applySpanCorrections(jobId, corrections);
-  return { corrections, affectedPages };
+  const targetPages = nextCorrection.scope === "book-font-size"
+    ? new Set([nextCorrection.pageIndex])
+    : pagesAffectedByCorrection(nextCorrection, previousCorrection);
+  const affectedPages = await applySpanCorrections(jobId, corrections, targetPages);
+  if (nextCorrection.scope === "book-font-size") {
+    queueBookCorrectionApply(jobId, corrections);
+  }
+  return { correctionCount: corrections.length, affectedPages };
 }
 
-export async function applySpanCorrections(jobId: string, corrections?: SpanCorrection[]): Promise<number[]> {
+export async function applySpanCorrections(jobId: string, corrections?: SpanCorrection[], targetPages?: Set<number> | null): Promise<number[]> {
   const activeCorrections = corrections ?? await getSpanCorrections(jobId);
   const styleDir = jobStore.getReviewStylesDir(jobId);
-  const entries = await readdir(styleDir).catch(() => []);
-  const affectedPages: number[] = [];
-  for (const entry of entries) {
+  const entries = targetPages
+    ? [...targetPages].map((pageIndex) => `page-${pageIndex + 1}.css`)
+    : await readdir(styleDir).catch(() => []);
+  const targetEntries = entries.filter((entry) => {
     const match = entry.match(/^page-(\d+)\.css$/);
-    if (!match) continue;
+    if (!match) return false;
+    const pageIndex = Number(match[1]) - 1;
+    return !targetPages || targetPages.has(pageIndex);
+  });
+  const affectedPages = await mapWithConcurrency(targetEntries, targetPages ? 1 : BOOK_CORRECTION_CONCURRENCY, async (entry) => {
+    const match = entry.match(/^page-(\d+)\.css$/);
+    if (!match) return null;
     const pageIndex = Number(match[1]) - 1;
     const filePath = path.join(styleDir, entry);
     const originalCss = await readFile(filePath, "utf8");
@@ -216,8 +291,9 @@ export async function applySpanCorrections(jobId: string, corrections?: SpanCorr
       : `${baseCss.trimEnd()}\n`;
     if (nextCss !== originalCss) {
       await writeFile(filePath, nextCss, "utf8");
-      affectedPages.push(pageIndex);
+      return pageIndex;
     }
-  }
-  return affectedPages;
+    return null;
+  });
+  return affectedPages.filter((pageIndex): pageIndex is number => pageIndex !== null).sort((a, b) => a - b);
 }
