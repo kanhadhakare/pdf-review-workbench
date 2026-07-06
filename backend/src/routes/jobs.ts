@@ -300,11 +300,19 @@ jobsRouter.post("/", upload.single("file"), async (req, res) => {
     if (req.file) {
       bytes = new Uint8Array(req.file.buffer);
       originalFileName = req.file.originalname;
+      if (bytes.byteLength === 0) {
+        res.status(400).json({ message: "Uploaded file is empty. Use curl -F file=@path instead of browser copied --data-raw." });
+        return;
+      }
       warning = req.file.size > 50 * 1024 * 1024 ? "large_file" : undefined;
     } else if (typeof req.body?.localPath === "string") {
       const normalizedPath = normalizeLocalPath(req.body.localPath);
       bytes = new Uint8Array(await readFile(normalizedPath));
       originalFileName = path.basename(normalizedPath);
+      if (bytes.byteLength === 0) {
+        res.status(400).json({ message: "Local PDF file is empty" });
+        return;
+      }
       warning = bytes.byteLength > 50 * 1024 * 1024 ? "large_file" : undefined;
     } else {
       res.status(400).json({ message: "Provide a PDF upload or localPath" });

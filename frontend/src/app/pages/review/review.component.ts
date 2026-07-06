@@ -113,6 +113,25 @@ export class ReviewComponent {
     const selectedId = this.selectedAccessibilityTagId();
     return selectedId ? this.accessibilityTags().find((tag) => tag.id === selectedId) ?? null : null;
   });
+  readonly selectedAccessibilityTagIndex = computed(() => {
+    const selectedId = this.selectedAccessibilityTagId();
+    return selectedId ? this.normalizeAccessibilityTagOrder(this.accessibilityTags()).findIndex((tag) => tag.id === selectedId) : -1;
+  });
+  readonly selectedAccessibilityTagText = computed(() => {
+    const tag = this.selectedAccessibilityTag();
+    const page = this.page();
+    if (!tag || !page) return "";
+    const tagBox = tag.bbox;
+    const text = (page.blocks ?? [])
+      .filter((block) => this.boxOverlapRatio(tagBox, block) > 0.15)
+      .sort((left, right) => (left.y - right.y) || (left.x - right.x))
+      .map((block) => block.text?.trim() ?? "")
+      .filter(Boolean)
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    return text;
+  });
   readonly savingBoxes = signal(false);
   readonly recognizingEquation = signal(false);
   readonly equationMessage = signal("");
@@ -140,6 +159,14 @@ export class ReviewComponent {
   readonly selectedEquationBox = computed(() => {
     const selectedBoxId = this.selectedBoxId();
     return selectedBoxId ? this.boxes().find((box) => box.id === selectedBoxId && box.tag === "equation") ?? null : null;
+  });
+  readonly selectedBox = computed(() => {
+    const selectedBoxId = this.selectedBoxId();
+    return selectedBoxId ? this.boxes().find((box) => box.id === selectedBoxId) ?? null : null;
+  });
+  readonly selectedBoxIndex = computed(() => {
+    const selectedBoxId = this.selectedBoxId();
+    return selectedBoxId ? this.normalizeBoxOrder(this.boxes()).findIndex((box) => box.id === selectedBoxId) : -1;
   });
   readonly selectedTableBox = computed(() => {
     const selectedBoxId = this.selectedBoxId();
@@ -660,6 +687,25 @@ export class ReviewComponent {
       const index = ordered.findIndex((tag) => tag.id === tagId);
       if (index < 0) return ordered;
       const nextIndex = Math.max(0, Math.min(ordered.length - 1, index + delta));
+      if (nextIndex === index) return ordered;
+      const next = [...ordered];
+      const [tag] = next.splice(index, 1);
+      next.splice(nextIndex, 0, tag);
+      if (this.accessibilityReviewStatus() === "reviewed") this.accessibilityReviewStatus.set("needs-review");
+      return this.normalizeAccessibilityTagOrder(next);
+    });
+  }
+
+  setSelectedAccessibilityTagOrder(value: number | string): void {
+    const selectedId = this.selectedAccessibilityTagId();
+    if (!selectedId) return;
+    const targetOrder = Math.round(Number(value));
+    if (!Number.isFinite(targetOrder)) return;
+    this.accessibilityTags.update((existing) => {
+      const ordered = this.normalizeAccessibilityTagOrder(existing);
+      const index = ordered.findIndex((tag) => tag.id === selectedId);
+      if (index < 0) return ordered;
+      const nextIndex = Math.max(0, Math.min(ordered.length - 1, targetOrder - 1));
       if (nextIndex === index) return ordered;
       const next = [...ordered];
       const [tag] = next.splice(index, 1);
@@ -1941,6 +1987,25 @@ export class ReviewComponent {
     });
   }
 
+  setSelectedBoxOrder(value: number | string): void {
+    const selectedBoxId = this.selectedBoxId();
+    if (!selectedBoxId) return;
+    const targetOrder = Math.round(Number(value));
+    if (!Number.isFinite(targetOrder)) return;
+    this.boxes.update((existing) => {
+      const ordered = this.normalizeBoxOrder(existing);
+      const index = ordered.findIndex((box) => box.id === selectedBoxId);
+      if (index < 0) return ordered;
+      const nextIndex = Math.max(0, Math.min(ordered.length - 1, targetOrder - 1));
+      if (nextIndex === index) return ordered;
+      const next = [...ordered];
+      const [box] = next.splice(index, 1);
+      next.splice(nextIndex, 0, box);
+      this.boxesDirty.set(true);
+      return this.normalizeBoxOrder(next);
+    });
+  }
+
   private resizeBox(box: SemanticBox, handle: ResizeHandle, dx: number, dy: number): SemanticBox {
     const page = this.page();
     const pageWidth = page?.pageWidth ?? Number.POSITIVE_INFINITY;
@@ -1971,6 +2036,21 @@ export class ReviewComponent {
       w: Number(width.toFixed(2)),
       h: Number(height.toFixed(2))
     };
+  }
+
+  private boxOverlapRatio(
+    source: { x: number; y: number; w: number; h: number },
+    target: { x: number; y: number; w: number; h: number }
+  ): number {
+    const left = Math.max(source.x, target.x);
+    const top = Math.max(source.y, target.y);
+    const right = Math.min(source.x + source.w, target.x + target.w);
+    const bottom = Math.min(source.y + source.h, target.y + target.h);
+    const overlapWidth = Math.max(0, right - left);
+    const overlapHeight = Math.max(0, bottom - top);
+    const overlapArea = overlapWidth * overlapHeight;
+    const targetArea = Math.max(1, target.w * target.h);
+    return overlapArea / targetArea;
   }
 
   private moveTableGridLine(box: SemanticBox, axis: "column" | "row", lineIndex: number, dx: number, dy: number): SemanticBox {

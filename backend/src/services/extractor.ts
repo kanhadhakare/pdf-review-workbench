@@ -1139,7 +1139,7 @@ async function completeSourceManifest(job: StoredJobState, pages: ImportedPageMa
   });
 }
 
-async function extractLargePdfInChunks(job: StoredJobState, profile: ExtractionProfile, dpi: number, logger: JobLogger): Promise<void> {
+async function extractLargePdfInChunks(job: StoredJobState, profile: ExtractionProfile, dpi: number, logger: JobLogger, options: { accessibilityTagging?: boolean } = {}): Promise<void> {
   await logger.info("large-pdf.split-flow.start", { pagesPerChunk: largePdfPagesPerChunk, maxChunkBytes: mupdfMaxInputBytes });
   const splitManifest = await splitPdfWithPdfBox(job.id, job.filePath, largePdfPagesPerChunk);
   const oversizedChunks = splitManifest.chunks.filter((chunk) => isTooLargeForMuPdf(chunk.sizeBytes));
@@ -1176,7 +1176,9 @@ async function extractLargePdfInChunks(job: StoredJobState, profile: ExtractionP
           extracted.pageWidth,
           profile
         );
-        const built = buildPageArtifacts(job.id, extracted, profile, classified, fontManifest.fonts);
+        const built = options.accessibilityTagging
+          ? buildAccessibilityTaggingPageArtifacts(job.id, extracted, profile, classified)
+          : buildPageArtifacts(job.id, extracted, profile, classified, fontManifest.fonts);
         await jobStore.savePageArtifacts(
           job.id,
           extracted.pageIndex,
@@ -1216,6 +1218,12 @@ export async function extractPDFForAccessibilityTagging(job: StoredJobState, pro
   await jobStore.updateJob(job.id, { status: ExtractionStatus.processing, processedPages: 0, dpi });
   const sourcePages: ImportedPageManifest[] = [];
   try {
+    const sourceSize = await getFileSize(job.filePath);
+    await logger.info("accessibility-pdf.preflight", { sourceSize, mupdfMaxInputBytes });
+    if (isTooLargeForMuPdf(sourceSize)) {
+      await extractLargePdfInChunks(job, profile, dpi, logger, { accessibilityTagging: true });
+      return;
+    }
     await assertMuPdfInputSize(job.filePath, logger);
     let pageCount = 0;
     await extractWithMuPdf(job.filePath, profile, dpi, async (extracted, totalPages) => {

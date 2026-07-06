@@ -106,6 +106,41 @@
       <span class="equation-status" *ngIf="equationMessage()">{{ equationMessage() }}</span>
     </header>
 
+    <aside class="zone-inspector" *ngIf="boxMode() && !isTaggingWorkflow() && selectedBox() as selected">
+      <header>
+        <strong>Zone #{{ selected.readingOrder ?? (selectedBoxIndex() + 1) }}</strong>
+        <button type="button" title="Close" (click)="selectedBoxId.set(null)">&times;</button>
+      </header>
+      <label>
+        Semantic tag
+        <select [ngModel]="selected.tag" (ngModelChange)="setActiveTag($event)" [disabled]="!!blockingMessage()">
+          <option value="p">p</option>
+          <option value="h1">h1</option>
+          <option value="h2">h2</option>
+          <option value="h3">h3</option>
+          <option value="caption">caption</option>
+          <option value="table">{{ isArchiveSource() ? 'table' : 'table crop' }}</option>
+          <option *ngIf="!isArchiveSource()" value="img">img crop</option>
+          <option *ngIf="!isArchiveSource()" value="equation">equation</option>
+        </select>
+      </label>
+      <label>
+        Reading order
+        <input type="number" min="1" [max]="boxes().length" [ngModel]="selected.readingOrder ?? (selectedBoxIndex() + 1)" (ngModelChange)="setSelectedBoxOrder($event)" [disabled]="!!blockingMessage()">
+      </label>
+      <div class="zone-inspector__actions">
+        <button type="button" (click)="moveBoxOrder(selected.id, -1)" [disabled]="selectedBoxIndex() <= 0 || !!blockingMessage()">Move up</button>
+        <button type="button" (click)="moveBoxOrder(selected.id, 1)" [disabled]="selectedBoxIndex() < 0 || selectedBoxIndex() >= boxes().length - 1 || !!blockingMessage()">Move down</button>
+        <button type="button" class="danger" (click)="deleteBox(selected.id)" [disabled]="!!blockingMessage()">Delete</button>
+      </div>
+      <dl>
+        <div><dt>Left</dt><dd>{{ selected.x | number:'1.0-2' }}px</dd></div>
+        <div><dt>Top</dt><dd>{{ selected.y | number:'1.0-2' }}px</dd></div>
+        <div><dt>Width</dt><dd>{{ selected.w | number:'1.0-2' }}px</dd></div>
+        <div><dt>Height</dt><dd>{{ selected.h | number:'1.0-2' }}px</dd></div>
+      </dl>
+    </aside>
+
     <div class="archive-zoning-notice" *ngIf="showArchiveZoningNotice()">
       <section class="archive-zoning-notice__card" role="dialog" aria-modal="false" aria-labelledby="archive-zoning-title">
         <header>
@@ -124,11 +159,26 @@
       <em *ngIf="accessibilityMessage()">{{ accessibilityMessage() }}</em>
     </section>
 
-    <section class="accessibility-inspector" *ngIf="isTaggingWorkflow()">
-      <ng-container *ngIf="selectedAccessibilityTag() as tag; else noAccessibilityTagSelected">
+    <section class="accessibility-inspector" *ngIf="isTaggingWorkflow() && selectedAccessibilityTag() as tag">
         <div class="accessibility-inspector__summary">
-          <strong>#{{ tag.readingOrder }} {{ tag.tag }}</strong>
-          <span>{{ tag.source }} · {{ tag.status }} · {{ tag.confidence | number:'1.2-2' }}</span>
+          <div>
+            <strong>#{{ tag.readingOrder }} {{ tag.tag }}</strong>
+            <span>{{ tag.source }} · {{ tag.status }} · {{ tag.confidence | number:'1.2-2' }}</span>
+          </div>
+          <button type="button" title="Close panel" (click)="selectedAccessibilityTagId.set(null)">&times;</button>
+        </div>
+        <div class="accessibility-inspector__selected-text">
+          <strong>Selected text</strong>
+          <p>{{ selectedAccessibilityTagText() || 'No extracted text found inside this tag box.' }}</p>
+        </div>
+        <label>
+          Reading order
+          <input type="number" min="1" [max]="accessibilityTags().length" [ngModel]="tag.readingOrder ?? (selectedAccessibilityTagIndex() + 1)" (ngModelChange)="setSelectedAccessibilityTagOrder($event)" [disabled]="!!blockingMessage()">
+        </label>
+        <div class="accessibility-inspector__actions">
+          <button type="button" (click)="moveAccessibilityTagOrder(tag.id, -1)" [disabled]="selectedAccessibilityTagIndex() <= 0 || !!blockingMessage()">Move up</button>
+          <button type="button" (click)="moveAccessibilityTagOrder(tag.id, 1)" [disabled]="selectedAccessibilityTagIndex() < 0 || selectedAccessibilityTagIndex() >= accessibilityTags().length - 1 || !!blockingMessage()">Move down</button>
+          <button type="button" class="danger" (click)="deleteAccessibilityTag(tag.id)" [disabled]="!!blockingMessage()">Delete</button>
         </div>
         <label>
           Status
@@ -175,10 +225,6 @@
             <option value="both">both</option>
           </select>
         </label>
-      </ng-container>
-      <ng-template #noAccessibilityTagSelected>
-        <span>Select a tag box to edit alt text, formula text, table metadata, language, and status.</span>
-      </ng-template>
       <div class="accessibility-report" *ngIf="accessibilityValidationReport() as report">
         <strong>Validation: {{ report.status }}</strong>
         <span>{{ report.errorCount }} errors · {{ report.warningCount }} warnings</span>
@@ -291,14 +337,12 @@
                 (mousedown)="accessibilityTagMouseDown($event, tag)">
                 <span class="accessibility-tag__label">
                   <span>#{{ tag.readingOrder ?? (i + 1) }} {{ tag.tag }}</span>
-                  <button type="button" title="Move earlier" [disabled]="i === 0" (mousedown)="$event.stopPropagation()" (click)="moveAccessibilityTagOrder(tag.id, -1)">↑</button>
-                  <button type="button" title="Move later" [disabled]="i === accessibilityTags().length - 1" (mousedown)="$event.stopPropagation()" (click)="moveAccessibilityTagOrder(tag.id, 1)">↓</button>
                 </span>
                 <button type="button" class="accessibility-tag__delete" title="Delete tag" (mousedown)="$event.stopPropagation()" (click)="deleteAccessibilityTag(tag.id)">&times;</button>
-                <button type="button" class="resize-handle resize-handle--nw" title="Resize" (mousedown)="accessibilityTagResizeMouseDown($event, tag, 'nw')"></button>
-                <button type="button" class="resize-handle resize-handle--ne" title="Resize" (mousedown)="accessibilityTagResizeMouseDown($event, tag, 'ne')"></button>
-                <button type="button" class="resize-handle resize-handle--sw" title="Resize" (mousedown)="accessibilityTagResizeMouseDown($event, tag, 'sw')"></button>
-                <button type="button" class="resize-handle resize-handle--se" title="Resize" (mousedown)="accessibilityTagResizeMouseDown($event, tag, 'se')"></button>
+                <button *ngIf="selectedAccessibilityTagId() === tag.id" type="button" class="resize-handle resize-handle--nw" title="Resize" (mousedown)="accessibilityTagResizeMouseDown($event, tag, 'nw')"></button>
+                <button *ngIf="selectedAccessibilityTagId() === tag.id" type="button" class="resize-handle resize-handle--ne" title="Resize" (mousedown)="accessibilityTagResizeMouseDown($event, tag, 'ne')"></button>
+                <button *ngIf="selectedAccessibilityTagId() === tag.id" type="button" class="resize-handle resize-handle--sw" title="Resize" (mousedown)="accessibilityTagResizeMouseDown($event, tag, 'sw')"></button>
+                <button *ngIf="selectedAccessibilityTagId() === tag.id" type="button" class="resize-handle resize-handle--se" title="Resize" (mousedown)="accessibilityTagResizeMouseDown($event, tag, 'se')"></button>
               </div>
               <div *ngIf="drawingAccessibilityTag() as tag" class="accessibility-draw-tag" [style.left.px]="tag.x" [style.top.px]="tag.y" [style.width.px]="tag.w" [style.height.px]="tag.h"></div>
             </div>
@@ -341,14 +385,12 @@
                 </ng-container>
                 <span class="saved-box__label">
                   <span>#{{ b.readingOrder ?? (i + 1) }} {{ b.tag }}<ng-container *ngIf="b.tag === 'equation' && b.math?.status"> &middot; {{ b.math?.status }}</ng-container></span>
-                  <button *ngIf="boxMode()" type="button" class="saved-box__order" title="Move earlier" [disabled]="i === 0" (mousedown)="$event.stopPropagation()" (click)="moveBoxOrder(b.id, -1)">↑</button>
-                  <button *ngIf="boxMode()" type="button" class="saved-box__order" title="Move later" [disabled]="i === boxes().length - 1" (mousedown)="$event.stopPropagation()" (click)="moveBoxOrder(b.id, 1)">↓</button>
                 </span>
                 <button *ngIf="boxMode()" type="button" class="saved-box__delete" title="Delete box" (mousedown)="$event.stopPropagation()" (click)="deleteBox(b.id)">&times;</button>
-                <button *ngIf="boxMode()" type="button" class="resize-handle resize-handle--nw" title="Resize" (mousedown)="resizeMouseDown($event, b, 'nw')"></button>
-                <button *ngIf="boxMode()" type="button" class="resize-handle resize-handle--ne" title="Resize" (mousedown)="resizeMouseDown($event, b, 'ne')"></button>
-                <button *ngIf="boxMode()" type="button" class="resize-handle resize-handle--sw" title="Resize" (mousedown)="resizeMouseDown($event, b, 'sw')"></button>
-                <button *ngIf="boxMode()" type="button" class="resize-handle resize-handle--se" title="Resize" (mousedown)="resizeMouseDown($event, b, 'se')"></button>
+                <button *ngIf="boxMode() && selectedBoxId() === b.id" type="button" class="resize-handle resize-handle--nw" title="Resize" (mousedown)="resizeMouseDown($event, b, 'nw')"></button>
+                <button *ngIf="boxMode() && selectedBoxId() === b.id" type="button" class="resize-handle resize-handle--ne" title="Resize" (mousedown)="resizeMouseDown($event, b, 'ne')"></button>
+                <button *ngIf="boxMode() && selectedBoxId() === b.id" type="button" class="resize-handle resize-handle--sw" title="Resize" (mousedown)="resizeMouseDown($event, b, 'sw')"></button>
+                <button *ngIf="boxMode() && selectedBoxId() === b.id" type="button" class="resize-handle resize-handle--se" title="Resize" (mousedown)="resizeMouseDown($event, b, 'se')"></button>
               </div>
               <div *ngIf="drawingBox() as box" class="draw-box" [style.left.px]="box.x" [style.top.px]="box.y" [style.width.px]="box.w" [style.height.px]="box.h"></div>
             </div>
@@ -367,3 +409,7 @@
     <p *ngIf="loading()">{{ loading() }}</p>
   </section>
 </main>
+
+
+
+

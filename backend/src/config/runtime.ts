@@ -4,7 +4,10 @@ const isWindows = process.platform === "win32";
 const PYTHON_EXE = isWindows ? "python.exe" : "python3";
 
 function unique(values: Array<string | null | undefined>): string[] {
-  return [...new Set(values.filter((value): value is string => Boolean(value && value.trim())).map((value) => value.trim()))];
+  return [...new Set(values
+    .filter((value): value is string => Boolean(value && value.trim()))
+    .map((value) => value.trim().replace(/^["']|["']$/g, ""))
+    .filter(Boolean))];
 }
 
 function resolvePath(candidate: string): string {
