@@ -10,3 +10,4 @@ storage/uploads/*
 !storage/uploads/.gitkeep
 .python311/*
 tools/target/*
+.docling-env/

@@ -12,3 +12,6 @@ backend/tmp-*
 backend/tmpSample.pdf
 ./*.env
 cloudflared.log
+.docling-env/
+.docling-venv/
+backend/.gitignore
