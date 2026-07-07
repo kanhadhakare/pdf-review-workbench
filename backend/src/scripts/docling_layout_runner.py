@@ -164,7 +164,9 @@ def normalize_items(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 def convert_pdf(source_pdf: str) -> Dict[str, Any]:
     try:
-        from docling.document_converter import DocumentConverter
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.pipeline_options import PdfPipelineOptions
+        from docling.document_converter import DocumentConverter, PdfFormatOption
     except Exception as error:
         return {
             "engine": "docling",
@@ -174,7 +176,14 @@ def convert_pdf(source_pdf: str) -> Dict[str, Any]:
         }
 
     try:
-        converter = DocumentConverter()
+        pipeline_options = PdfPipelineOptions()
+        pipeline_options.do_ocr = False
+        pipeline_options.force_backend_text = True
+        converter = DocumentConverter(
+            format_options={
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+            }
+        )
         result = converter.convert(source_pdf)
         document = result.document
         if hasattr(document, "export_to_dict"):
@@ -205,14 +214,14 @@ def convert_pdf(source_pdf: str) -> Dict[str, Any]:
 
 def main() -> int:
     if len(sys.argv) < 2:
-        print(json.dumps({
+        sys.stdout.buffer.write(json.dumps({
             "engine": "docling",
             "status": "failed",
             "message": "Usage: docling_layout_runner.py <source.pdf>",
             "items": [],
-        }))
+        }, ensure_ascii=False).encode("utf-8"))
         return 2
-    print(json.dumps(convert_pdf(sys.argv[1]), ensure_ascii=False))
+    sys.stdout.buffer.write(json.dumps(convert_pdf(sys.argv[1]), ensure_ascii=False).encode("utf-8"))
     return 0
 
 

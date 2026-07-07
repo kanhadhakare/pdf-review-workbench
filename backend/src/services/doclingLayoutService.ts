@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import pLimit from "p-limit";
-import { doclingLayoutScriptPath, pythonCommandCandidates } from "../config/runtime.js";
+import { doclingLayoutScriptPath, doclingPythonCommandCandidates } from "../config/runtime.js";
 import { jobStore, type StoredJobState } from "./jobStore.js";
 
 const DOCLING_LIMIT = pLimit(1);
@@ -154,13 +154,26 @@ function runPython(command: string, sourcePdf: string): Promise<LayoutModelResul
   });
 }
 
+function isUnavailablePythonResult(result: LayoutModelResult): boolean {
+  if (result.status === "unavailable") return true;
+  const message = result.message ?? "";
+  return [
+    "No Python at",
+    "No installed Python found",
+    "Unable to create process using",
+    "was not found",
+    "is not recognized",
+    "Docling is not installed or cannot be imported"
+  ].some((pattern) => message.includes(pattern));
+}
+
 async function runDocling(job: StoredJobState): Promise<LayoutModelResult> {
   const messages: string[] = [];
-  for (const command of pythonCommandCandidates()) {
+  for (const command of doclingPythonCommandCandidates()) {
     const result = await runPython(command, job.filePath);
     if (result.status === "ok") return result;
     messages.push(`${command}: ${result.message ?? result.status}`);
-    if (result.status === "failed") return result;
+    if (!isUnavailablePythonResult(result)) return result;
   }
   return {
     engine: "docling",

@@ -28,6 +28,7 @@ export const backendRoot = resolvePath(process.env.BACKEND_ROOT ?? process.cwd()
 export const workbenchRoot = resolvePath(process.env.WORKBENCH_ROOT ?? path.join(backendRoot, ".."));
 export const storageRoot = resolvePath(process.env.STORAGE_ROOT ?? path.join(workbenchRoot, "storage"));
 export const localPythonBin = path.join(backendRoot, ".venv", isWindows ? "Scripts" : "bin", PYTHON_EXE);
+export const doclingPythonBin = path.join(backendRoot, ".docling-venv", isWindows ? "Scripts" : "bin", PYTHON_EXE);
 export const jobsStorageRoot = path.join(storageRoot, "jobs");
 export const fixesStorageRoot = path.join(storageRoot, "fixes");
 export const profilesStorageRoot = path.join(storageRoot, "profiles");
@@ -67,6 +68,20 @@ export function getAllowedLocalPathRoots(): string[] {
 export function pythonCommandCandidates(): string[] {
   return unique([
     process.env.PYTHON_BIN,
+    localPythonBin,
+    process.env.PYTHON_HOME ? resolvePath(path.join(process.env.PYTHON_HOME, isWindows ? PYTHON_EXE : path.join("bin", PYTHON_EXE))) : null,
+    isWindows ? "python" : "python3",
+    isWindows ? "py" : "python",
+    isWindows ? "C:/Program Files/PostgreSQL/17/pgAdmin 4/python/python.exe" : "/usr/bin/python3",
+    isWindows ? "C:/Users/Diva/AppData/Local/Programs/Python/Python313/python.exe" : "/usr/local/bin/python3"
+  ]);
+}
+
+export function doclingPythonCommandCandidates(): string[] {
+  return unique([
+    process.env.DOCLING_PYTHON_BIN,
+    process.env.PYTHON_BIN,
+    doclingPythonBin,
     localPythonBin,
     process.env.PYTHON_HOME ? resolvePath(path.join(process.env.PYTHON_HOME, isWindows ? PYTHON_EXE : path.join("bin", PYTHON_EXE))) : null,
     isWindows ? "python" : "python3",

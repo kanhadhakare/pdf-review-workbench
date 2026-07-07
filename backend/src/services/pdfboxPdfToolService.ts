@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { access, mkdir, readFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pdfboxPdfToolJarPath } from "../config/runtime.js";
 import { jobStore } from "./jobStore.js";
@@ -75,4 +75,43 @@ export async function splitPdfWithPdfBox(jobId: string, sourcePdf: string, pages
     largestChunkBytes: Math.max(0, ...manifest.chunks.map((chunk) => chunk.sizeBytes))
   });
   return manifest;
+}
+
+export interface PdfTagReport {
+  engine: "pdfbox";
+  sourcePdf: string;
+  outputPdf: string;
+  pageCount: number;
+  plannedTags: number;
+  writtenTags: number;
+}
+
+export async function writeTaggedPdfWithPdfBox(jobId: string, sourcePdf: string, tagPlanTsv: string, outputPdf: string): Promise<PdfTagReport> {
+  const logger = createJobLogger(jobId);
+  const jarPath = process.env.PDFBOX_PDF_TOOL_JAR || pdfboxPdfToolJarPath;
+  if (!(await fileExists(jarPath))) {
+    throw new Error(`PDFBox PDF tool jar not found at ${jarPath}. Build backend/tools/pdfbox-pdf-tool first.`);
+  }
+
+  const accessibilityDir = jobStore.getAccessibilityDir(jobId);
+  const planPath = path.join(accessibilityDir, "tag-plan.tsv");
+  const reportPath = path.join(accessibilityDir, "tagged-report.json");
+  await mkdir(accessibilityDir, { recursive: true });
+  await writeFile(planPath, tagPlanTsv, "utf8");
+
+  await logger.info("pdfbox.tag.start", { sourcePdf, planPath, outputPdf });
+  const result = await runJava(["-jar", jarPath, "tag", sourcePdf, planPath, outputPdf, reportPath]);
+  if (result.error) {
+    await logger.error("pdfbox.tag.error", result.error);
+    throw result.error;
+  }
+  if (result.code !== 0) {
+    const message = (result.stderr || result.stdout || `PDFBox tag export exited with code ${result.code}`).trim();
+    await logger.error("pdfbox.tag.error", new Error(message), { code: result.code });
+    throw new Error(message);
+  }
+
+  const report = JSON.parse(await readFile(reportPath, "utf8")) as PdfTagReport;
+  await logger.info("pdfbox.tag.done", { ...report });
+  return report;
 }

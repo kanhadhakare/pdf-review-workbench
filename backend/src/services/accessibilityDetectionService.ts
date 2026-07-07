@@ -93,6 +93,11 @@ interface DetectionCandidate {
   lastLineText?: string;
   lineCount?: number;
   maxLineWidth?: number;
+  sourceLabel?: string;
+  order?: number;
+  splitConfidence?: number;
+  splitReasons?: string[];
+  splitBoundaryBefore?: boolean;
 }
 
 interface LineCandidate extends DetectionCandidate {
@@ -125,6 +130,9 @@ interface DebugCandidateSnapshot {
   lastLineText?: string;
   lineCount?: number;
   maxLineWidth?: number;
+  splitConfidence?: number;
+  splitReasons?: string[];
+  splitBoundaryBefore?: boolean;
 }
 
 interface DebugMergeDecision {
@@ -144,12 +152,14 @@ interface AccessibilityDetectionDebug {
   doclingCandidates: DebugCandidateSnapshot[];
   doclingMergedCandidates: DebugCandidateSnapshot[];
   lineCandidates: DebugCandidateSnapshot[];
+  tocCandidates: DebugCandidateSnapshot[];
   listCandidates: DebugCandidateSnapshot[];
   regionCandidates: DebugCandidateSnapshot[];
   mergeDecisions: DebugMergeDecision[];
   finalTags: Array<{
     readingOrder: number;
     tag: AccessibilityTagName;
+    text?: string;
     bbox: LayoutBox;
     confidence: number;
   }>;
@@ -201,10 +211,15 @@ function snapshotCandidate(candidate: DetectionCandidate): DebugCandidateSnapsho
     confidence: Number(candidate.confidence.toFixed(3)),
     regionId: candidate.regionId,
     listMarker: candidate.listMarker,
+    sourceLabel: candidate.sourceLabel,
+    order: candidate.order,
     lastLineBbox: candidate.lastLineBlock ? snapshotBox(candidate.lastLineBlock) : undefined,
     lastLineText: candidate.lastLineText,
     lineCount: candidate.lineCount,
-    maxLineWidth: candidate.maxLineWidth === undefined ? undefined : Number(candidate.maxLineWidth.toFixed(2))
+    maxLineWidth: candidate.maxLineWidth === undefined ? undefined : Number(candidate.maxLineWidth.toFixed(2)),
+    splitConfidence: candidate.splitConfidence === undefined ? undefined : Number(candidate.splitConfidence.toFixed(3)),
+    splitReasons: candidate.splitReasons,
+    splitBoundaryBefore: candidate.splitBoundaryBefore
   };
 }
 
@@ -364,6 +379,113 @@ function classifyListLineCandidates(lines: LineCandidate[]): LineCandidate[] {
   });
 }
 
+interface TocRowCandidate {
+  marker: LineCandidate;
+  title: LineCandidate;
+  pageNumber?: LineCandidate;
+}
+
+function isTocSectionMarker(text: string): boolean {
+  return /^\d+(?:\.\d+)*$/u.test(text.trim());
+}
+
+function isStandalonePageNumber(text: string): boolean {
+  return /^\d{1,4}$/u.test(text.trim());
+}
+
+function median(values: number[]): number {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function sameBaselineCandidate(first: DetectionCandidate, second: DetectionCandidate): boolean {
+  const centerDelta = Math.abs((first.block.y + first.block.h / 2) - (second.block.y + second.block.h / 2));
+  const averageHeight = averageBoxHeight(first.block, second.block);
+  return centerDelta <= Math.max(3, averageHeight * 0.35);
+}
+
+function findTocRowCandidates(lines: LineCandidate[]): TocRowCandidate[] {
+  const rows: TocRowCandidate[] = [];
+  const sortedLines = [...lines].sort((a, b) => (a.block.y - b.block.y) || (a.block.x - b.block.x));
+  for (const marker of sortedLines) {
+    if (marker.tag !== "P" || !isTocSectionMarker(marker.text)) continue;
+    const sameRowRight = sortedLines
+      .filter((candidate) => candidate !== marker)
+      .filter((candidate) => candidate.tag === "P")
+      .filter((candidate) => sameBaselineCandidate(marker, candidate))
+      .filter((candidate) => candidate.block.x > boxRight(marker.block))
+      .sort((a, b) => a.block.x - b.block.x);
+    const title = sameRowRight.find((candidate) => !isStandalonePageNumber(candidate.text) && candidate.text.trim().length >= 4);
+    if (!title) continue;
+    const gap = title.block.x - boxRight(marker.block);
+    const averageHeight = averageBoxHeight(marker.block, title.block);
+    if (gap < 0 || gap > Math.max(72, averageHeight * 5)) continue;
+    const pageNumber = sameRowRight.find((candidate) => candidate !== title && isStandalonePageNumber(candidate.text) && candidate.block.x > boxRight(title.block));
+    rows.push({ marker, title, pageNumber });
+  }
+  return rows;
+}
+
+function isTocLikeRegion(rows: TocRowCandidate[]): boolean {
+  if (rows.length < 5) return false;
+  const markerX = median(rows.map((row) => row.marker.block.x));
+  const titleX = median(rows.map((row) => row.title.block.x));
+  const alignedRows = rows.filter((row) => {
+    const averageHeight = averageBoxHeight(row.marker.block, row.title.block);
+    return Math.abs(row.marker.block.x - markerX) <= Math.max(8, averageHeight * 0.8)
+      && Math.abs(row.title.block.x - titleX) <= Math.max(12, averageHeight * 1.2)
+      && row.title.block.x > row.marker.block.x;
+  });
+  const hierarchicalRows = alignedRows.filter((row) => row.marker.text.includes(".")).length;
+  const rowsWithPageNumber = alignedRows.filter((row) => !!row.pageNumber || /\s\d{1,4}$/u.test(row.title.text.trim())).length;
+  return alignedRows.length >= 5 && (hierarchicalRows >= 4 || rowsWithPageNumber >= 4);
+}
+
+function mergeTocRow(row: TocRowCandidate): LineCandidate {
+  const sources = [
+    ...row.marker.sourceCandidates,
+    ...row.title.sourceCandidates,
+    ...(row.pageNumber?.sourceCandidates ?? [])
+  ];
+  const block = [row.title.block, row.pageNumber?.block].filter((candidate): candidate is TextBlock => !!candidate)
+    .reduce((mergedBlock, candidate) => unionBlocks(mergedBlock, candidate), row.marker.block);
+  return {
+    block,
+    tag: "LI",
+    text: blockText(block),
+    confidence: (row.marker.confidence + row.title.confidence + (row.pageNumber?.confidence ?? row.title.confidence)) / (row.pageNumber ? 3 : 2),
+    listMarker: {
+      marker: row.marker.text.trim(),
+      markerLeft: row.marker.block.x,
+      textLeft: row.title.block.x
+    },
+    lastLineBlock: copyLayoutBox(block),
+    lastLineText: blockText(block),
+    lineCount: 1,
+    maxLineWidth: block.w,
+    sourceCandidates: sources
+  };
+}
+
+function mergeTocLikeRows(lines: LineCandidate[], debug?: AccessibilityDetectionDebug): LineCandidate[] {
+  const rows = findTocRowCandidates(lines);
+  if (!isTocLikeRegion(rows)) return lines;
+
+  const consumed = new Set<LineCandidate>();
+  const tocRows = rows.map((row) => {
+    consumed.add(row.marker);
+    consumed.add(row.title);
+    if (row.pageNumber) consumed.add(row.pageNumber);
+    return mergeTocRow(row);
+  });
+  const merged = [...lines.filter((line) => !consumed.has(line)), ...tocRows]
+    .sort((a, b) => (a.block.y - b.block.y) || (a.block.x - b.block.x));
+  if (debug) debug.tocCandidates = tocRows.map(snapshotCandidate);
+  return merged;
+}
+
 function isRegionBodyCandidate(candidate: DetectionCandidate): boolean {
   return candidate.tag === "P" || candidate.tag === "LI";
 }
@@ -475,8 +597,15 @@ function shouldMergeListContinuation(previous: DetectionCandidate, next: Detecti
   return listContinuationBlockReason(previous, next) === null;
 }
 
+function terminalComparableText(text: string): string {
+  return text
+    .trim()
+    .replace(/\s*\([^)]{0,80}\)\s*$/u, "")
+    .replace(/[\s)"'\]\u2019\u201d]+$/u, "");
+}
+
 function hasTerminalPunctuation(text: string): boolean {
-  return /[.!?:;]$/u.test(text.trim());
+  return /[.!?:;]$/u.test(terminalComparableText(text));
 }
 
 function endsWithHyphenatedContinuation(text: string): boolean {
@@ -494,7 +623,7 @@ function endsWithDecimalOrVersion(text: string): boolean {
 }
 
 function hasRealSentenceTerminalPunctuation(text: string): boolean {
-  const trimmed = text.trim();
+  const trimmed = terminalComparableText(text);
   if (!/[.!?]$/u.test(trimmed)) return false;
   if (endsWithKnownAbbreviation(trimmed)) return false;
   if (endsWithDecimalOrVersion(trimmed)) return false;
@@ -510,7 +639,11 @@ function startsWithLowercaseOrContinuation(text: string): boolean {
 }
 
 function startsWithStrongInstructionLabel(text: string): boolean {
-  return /^(IF|THEN|WHEN|WHERE|STEP\s*\d*|EXAMPLE|NOTE|TIP|OBJECTIVE|OBJECTIVES|MATERIALS|STANDARDS|HOMEWORK)\b[:：]?/iu.test(text.trim());
+  return /^(IF|THEN|WHEN|WHERE|STEP\s*\d*|EXAMPLE|NOTE|TIP|VOCABULARY|OBJECTIVE|OBJECTIVES|MATERIALS|STANDARDS|HOMEWORK)\b[:：]?/iu.test(text.trim());
+}
+
+function startsWithInstructionBoundary(text: string): boolean {
+  return /^(Ask|Choose|Complete|Display|Encourage|Explain|Have\s+students|Model|Read|Record|Show|So\b|Use(?:\s+Turn\s*&\s*Talk)?|What|Which|How|Why)\b/iu.test(text.trim());
 }
 
 function isIsolatedMarker(candidate: DetectionCandidate): boolean {
@@ -518,12 +651,14 @@ function isIsolatedMarker(candidate: DetectionCandidate): boolean {
 }
 
 function hasSemanticMergeBlocker(previous: DetectionCandidate, next: DetectionCandidate): boolean {
+  if (next.splitBoundaryBefore) return true;
   if (previous.tag !== next.tag && (previous.tag !== "LI" || next.tag !== "P")) return true;
   if (previous.tag !== "P" && previous.tag !== "LI") return true;
   if (next.tag !== "P") return true;
   if (isIsolatedMarker(previous) || isIsolatedMarker(next)) return true;
   if (startsWithStrongInstructionLabel(next.text)) return true;
   if (startsWithStrongInstructionLabel(previous.text) && startsWithStrongInstructionLabel(next.text)) return true;
+  if (hasRealSentenceTerminalPunctuation(candidateLastLineText(previous)) && startsWithInstructionBoundary(next.text)) return true;
   return false;
 }
 
@@ -666,6 +801,7 @@ function buildHeuristicLineCandidates(candidates: DetectionCandidate[], debug?: 
 
 function mergeCandidatePair(previous: DetectionCandidate, next: DetectionCandidate): DetectionCandidate {
   const block = unionBlocks(previous.block, next.block);
+  const orderValues = [previous.order, next.order].filter((value): value is number => typeof value === "number" && Number.isFinite(value));
   return {
     block,
     tag: previous.tag,
@@ -676,12 +812,15 @@ function mergeCandidatePair(previous: DetectionCandidate, next: DetectionCandida
     lastLineBlock: candidateLastLineBlock(next),
     lastLineText: candidateLastLineText(next),
     lineCount: candidateLineCount(previous) + candidateLineCount(next),
-    maxLineWidth: Math.max(candidateMaxLineWidth(previous), candidateMaxLineWidth(next))
+    maxLineWidth: Math.max(candidateMaxLineWidth(previous), candidateMaxLineWidth(next)),
+    sourceLabel: previous.sourceLabel ?? next.sourceLabel,
+    order: orderValues.length ? Math.min(...orderValues) : undefined
   };
 }
 
 function mergeHeuristicParagraphCandidates(candidates: DetectionCandidate[], debug?: AccessibilityDetectionDebug): DetectionCandidate[] {
-  const lineCandidates = assignHeuristicRegions(classifyListLineCandidates(buildHeuristicLineCandidates(candidates, debug)))
+  const rawLineCandidates = buildHeuristicLineCandidates(candidates, debug);
+  const lineCandidates = assignHeuristicRegions(classifyListLineCandidates(mergeTocLikeRows(rawLineCandidates, debug)))
     .filter((candidate) => candidate.tag === "LI" || !isTinyDecorativeText(candidate.block));
   if (debug) debug.regionCandidates = lineCandidates.map(snapshotCandidate);
   const listCandidates = mergeHeuristicListCandidates(lineCandidates, debug);
@@ -713,6 +852,7 @@ function createDetectionDebug(page: PageResult, engine: string, warnings: string
     doclingCandidates: [],
     doclingMergedCandidates: [],
     lineCandidates: [],
+    tocCandidates: [],
     listCandidates: [],
     regionCandidates: [],
     mergeDecisions: [],
@@ -730,6 +870,7 @@ function summarizeFinalTags(tags: AccessibilityTag[]): AccessibilityDetectionDeb
   return tags.map((tag) => ({
     readingOrder: tag.readingOrder,
     tag: tag.tag,
+    text: tag.actualText || tag.altText || undefined,
     bbox: tag.bbox,
     confidence: Number(tag.confidence.toFixed(3))
   }));
@@ -751,7 +892,7 @@ function suggestTags(page: PageResult, debug?: AccessibilityDetectionDebug): Acc
     });
 
   return mergeHeuristicParagraphCandidates(candidates, debug).map((candidate, index) => {
-    const { block, tag, confidence } = candidate;
+    const { block, tag, confidence, text } = candidate;
     return {
       id: randomUUID(),
       pageIndex: page.pageIndex,
@@ -766,7 +907,8 @@ function suggestTags(page: PageResult, debug?: AccessibilityDetectionDebug): Acc
       confidence,
       source: "auto-detection",
       status: confidence >= 0.8 && tag !== "Figure" && tag !== "Formula" && tag !== "Table" ? "suggested" : "needs-review",
-      actualText: tag === "Formula" ? blockText(block) || undefined : undefined,
+      actualText: tag !== "Figure" && tag !== "Artifact" && text ? text : undefined,
+      altText: tag === "Figure" && text ? text : undefined,
       createdAt: now,
       updatedAt: now
     };
@@ -818,102 +960,262 @@ function confidenceFromModel(item: LayoutModelItem, tag: AccessibilityTagName): 
   return Number(Math.max(0.35, Math.min(0.96, confidence - tagPenalty)).toFixed(3));
 }
 
-function unionModelItems(first: LayoutModelItem, second: LayoutModelItem): LayoutModelItem {
-  const x = Math.min(first.bbox.x, second.bbox.x);
-  const y = Math.min(first.bbox.y, second.bbox.y);
-  const right = Math.max(first.bbox.x + first.bbox.w, second.bbox.x + second.bbox.w);
-  const bottom = Math.max(first.bbox.y + first.bbox.h, second.bbox.y + second.bbox.h);
-  const confidenceValues = [first.confidence, second.confidence].filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+function estimatePageTextLineHeight(page: PageResult): number {
+  const heights = page.blocks
+    .filter((block) => blockText(block).length > 0)
+    .map((block) => block.h)
+    .filter((height) => Number.isFinite(height) && height >= 5 && height <= 80);
+  return heights.length ? Math.max(8, median(heights)) : 12;
+}
+
+function splitTextIntoSentenceUnits(text: string): string[] {
+  const normalizedText = text.replace(/\s+/g, " ").trim();
+  if (!normalizedText) return [];
+  const units: string[] = [];
+  let start = 0;
+
+  for (let index = 0; index < normalizedText.length; index += 1) {
+    const char = normalizedText[index];
+    if (char !== "." && char !== "?" && char !== "!") continue;
+    if (char === "." && /\d/u.test(normalizedText[index - 1] ?? "") && /\d/u.test(normalizedText[index + 1] ?? "")) continue;
+
+    const candidateText = normalizedText.slice(start, index + 1);
+    if (!hasRealSentenceTerminalPunctuation(candidateText)) continue;
+
+    let end = index + 1;
+    const parentheticalMatch = normalizedText.slice(end).match(/^\s*\([^)]{1,80}\)/u);
+    if (parentheticalMatch) end += parentheticalMatch[0].length;
+
+    const nextText = normalizedText.slice(end).trimStart();
+    if (!nextText) continue;
+    if (!startsWithUppercaseOrDigit(nextText) && !startsWithInstructionBoundary(nextText)) continue;
+
+    const unitText = normalizedText.slice(start, end).trim();
+    if (unitText) units.push(unitText);
+    start = end;
+  }
+
+  const finalText = normalizedText.slice(start).trim();
+  if (finalText) units.push(finalText);
+  return units.length ? units : [normalizedText];
+}
+
+function countInstructionUnits(units: string[]): number {
+  return units.filter((unit) => startsWithInstructionBoundary(unit) || startsWithStrongInstructionLabel(unit)).length;
+}
+
+function countQuestionAnswerPatterns(text: string): number {
+  return text.match(/\?\s*\([^)]{1,80}\)/gu)?.length ?? 0;
+}
+
+function hasEmbeddedSemanticLabel(text: string): boolean {
+  return /\b(?:VOCABULARY|NOTE|EXAMPLE|TIP|IF|THEN|OBJECTIVE|OBJECTIVES|MATERIALS|STANDARDS|HOMEWORK)\b/iu.test(text);
+}
+
+function hasAbbreviationOrReferenceAmbiguity(text: string): boolean {
+  return /\b(?:Dr|Prof|Mr|Mrs|Ms|Fig|Figs|Eq|Eqs|No|Nos|Vol|etc|e\.g|i\.e)\./iu.test(text) || /\b\d+(?:\.\d+){1,}\b/u.test(text);
+}
+
+function assessDoclingSplit(candidate: DetectionCandidate, page: PageResult): { confidence: number; reasons: string[]; units: string[] } {
+  const units = splitTextIntoSentenceUnits(candidate.text);
+  if (candidate.tag !== "P" || units.length < 2) return { confidence: 0, reasons: [], units };
+
+  const reasons: string[] = [];
+  let confidence = 0;
+  const lineHeight = estimatePageTextLineHeight(page);
+  const estimatedLines = candidate.block.h / Math.max(1, lineHeight);
+  const instructionUnits = countInstructionUnits(units);
+  const followingInstructionUnits = countInstructionUnits(units.slice(1));
+  const questionAnswerPatterns = countQuestionAnswerPatterns(candidate.text);
+  const embeddedSemanticLabel = hasEmbeddedSemanticLabel(candidate.text);
+
+  confidence += 0.3;
+  reasons.push("multiple-real-sentence-boundaries");
+
+  if (estimatedLines >= 2.25 || (units.length >= 3 && estimatedLines >= 1.6)) {
+    confidence += 0.25;
+    reasons.push(`tall-docling-block:${estimatedLines.toFixed(2)}-lines`);
+  }
+  if (followingInstructionUnits >= 1 || instructionUnits >= 2) {
+    confidence += 0.25;
+    reasons.push("repeated-instruction-starts");
+  }
+  if (questionAnswerPatterns >= 1) {
+    confidence += questionAnswerPatterns >= 2 ? 0.2 : 0.12;
+    reasons.push(`question-answer-patterns:${questionAnswerPatterns}`);
+  }
+  if (embeddedSemanticLabel) {
+    confidence += 0.35;
+    reasons.push("embedded-semantic-label");
+  }
+  if (instructionUnits === 0 && questionAnswerPatterns === 0 && !embeddedSemanticLabel) {
+    confidence -= 0.3;
+    reasons.push("normal-prose-penalty");
+  }
+  if (hasAbbreviationOrReferenceAmbiguity(candidate.text)) {
+    confidence -= 0.15;
+    reasons.push("abbreviation-reference-ambiguity");
+  }
+
   return {
-    ...first,
-    text: `${first.text ?? ""} ${second.text ?? ""}`.replace(/\s+/g, " ").trim(),
-    bbox: {
-      x,
-      y,
-      w: right - x,
-      h: bottom - y
-    },
-    confidence: confidenceValues.length
-      ? confidenceValues.reduce((sum, value) => sum + value, 0) / confidenceValues.length
-      : first.confidence,
-    order: Math.min(first.order, second.order)
+    confidence: Number(Math.max(0, Math.min(1, confidence)).toFixed(3)),
+    reasons,
+    units
   };
 }
 
-function doclingParagraphMergeBlockReason(previous: LayoutModelItem, next: LayoutModelItem): string | null {
-  const previousText = (previous.text ?? "").trim();
-  const nextText = (next.text ?? "").trim();
-  if (!previousText || !nextText) return "missing-text";
-  if (previous.pageIndex !== next.pageIndex) return "different-page";
-  if (mapDoclingLabel(previous.label, previousText) !== "P" || mapDoclingLabel(next.label, nextText) !== "P") return "not-paragraph-pair";
-
-  const previousBottom = previous.bbox.y + previous.bbox.h;
-  const verticalGap = next.bbox.y - previousBottom;
-  const averageLineHeight = Math.max(1, (previous.bbox.h + next.bbox.h) / 2);
-  if (verticalGap < -averageLineHeight * 0.25 || verticalGap > averageLineHeight * 1.8) return "vertical-gap";
-
-  const leftDelta = Math.abs(previous.bbox.x - next.bbox.x);
-  const widthDelta = Math.abs(previous.bbox.w - next.bbox.w);
-  const maxWidth = Math.max(previous.bbox.w, next.bbox.w, 1);
-  const sameColumn = sameColumnBoxes(previous.bbox, next.bbox) && leftDelta <= Math.max(14, maxWidth * 0.12);
-  const compatibleWidth = widthDelta <= Math.max(24, maxWidth * 0.35);
-  if (!sameColumn) return "different-column";
-  if (!compatibleWidth) return "width-delta";
-
-  if (/[:;]$/u.test(previousText) && nextText.length < 24) return "label-like-short-next-line";
-  return null;
+function semanticTagFromAccessibilityTag(tag: AccessibilityTagName): SemanticTag {
+  if (tag === "H1") return "h1";
+  if (tag === "H2") return "h2";
+  if (tag === "H3" || tag === "H4" || tag === "H5" || tag === "H6") return "h3";
+  if (tag === "Caption") return "caption";
+  if (tag === "Table") return "table";
+  if (tag === "Figure") return "img";
+  if (tag === "Formula") return "equation";
+  if (tag === "Artifact") return "artifact";
+  return "p";
 }
 
-function shouldMergeDoclingParagraphItems(previous: LayoutModelItem, next: LayoutModelItem): boolean {
-  return doclingParagraphMergeBlockReason(previous, next) === null;
+function doclingItemToCandidate(item: LayoutModelItem, page: PageResult): DetectionCandidate {
+  const text = (item.text ?? "").replace(/\s+/g, " ").trim();
+  const tag = mapDoclingLabel(item.label, text);
+  const bbox = scaleModelBox(item, page);
+  const confidence = confidenceFromModel(item, tag);
+  const block: TextBlock = {
+    id: `docling-${page.pageIndex + 1}-${item.order}`,
+    x: bbox.x,
+    y: bbox.y,
+    w: bbox.w,
+    h: bbox.h,
+    text,
+    fontSize: Math.max(1, Number((bbox.h * 0.75).toFixed(3))),
+    fontName: "Docling",
+    fontWeight: tag === "H1" || tag === "H2" || tag === "H3" ? "bold" : "normal",
+    fontColor: "#000000",
+    confidence,
+    tag: semanticTagFromAccessibilityTag(tag),
+    pageIndex: page.pageIndex,
+    styles: {
+      textIndent: 0,
+      paddingLeft: 0,
+      lineHeight: bbox.h,
+      textAlign: "left"
+    },
+    isFirstLineIndented: false,
+    rawSpans: []
+  };
+  return {
+    block,
+    tag,
+    text,
+    confidence,
+    lastLineBlock: copyLayoutBox(bbox),
+    lastLineText: text,
+    lineCount: 1,
+    maxLineWidth: bbox.w,
+    sourceLabel: item.label,
+    order: item.order
+  };
 }
 
-function mergeDoclingParagraphItems(items: LayoutModelItem[], page: PageResult, debug?: AccessibilityDetectionDebug): LayoutModelItem[] {
-  if (debug) debug.doclingCandidates = items.map((item) => snapshotModelItem(item, page));
-  const merged: LayoutModelItem[] = [];
-  for (const item of items) {
-    const previous = merged[merged.length - 1];
-    const reason = previous ? doclingParagraphMergeBlockReason(previous, item) : "first-candidate";
-    if (previous) {
-      debug?.mergeDecisions.push({
-        type: "docling-paragraph",
-        previous: snapshotModelItem(previous, page),
-        next: snapshotModelItem(item, page),
-        merged: reason === null,
-        reason: reason ?? "docling-paragraph-merge"
-      });
-    }
-    if (previous && reason === null) {
-      merged[merged.length - 1] = unionModelItems(previous, item);
+function splitSuspiciousDoclingCandidate(candidate: DetectionCandidate, page: PageResult): DetectionCandidate[] {
+  const assessment = assessDoclingSplit(candidate, page);
+  if (assessment.confidence < 0.7 || assessment.units.length < 2) return [candidate];
+
+  const unitHeight = candidate.block.h / assessment.units.length;
+  return assessment.units.map((unitText, index) => {
+    const block: TextBlock = {
+      ...candidate.block,
+      id: `${candidate.block.id}-split-${index + 1}`,
+      y: Number((candidate.block.y + unitHeight * index).toFixed(2)),
+      h: Number(Math.max(1, unitHeight).toFixed(2)),
+      text: unitText
+    };
+    return {
+      ...candidate,
+      block,
+      text: unitText,
+      lastLineBlock: copyLayoutBox(block),
+      lastLineText: unitText,
+      lineCount: 1,
+      maxLineWidth: block.w,
+      order: candidate.order === undefined ? undefined : candidate.order + index / 1000,
+      splitConfidence: assessment.confidence,
+      splitReasons: assessment.reasons,
+      splitBoundaryBefore: index > 0
+    };
+  });
+}
+
+function classifyDoclingListCandidates(candidates: DetectionCandidate[]): DetectionCandidate[] {
+  return candidates.map((candidate) => {
+    if (candidate.tag !== "P" && candidate.tag !== "LI") return candidate;
+    const match = listMarkerMatch(candidate.text);
+    if (!match && candidate.tag !== "LI") return candidate;
+    const averageHeight = Math.max(1, candidate.block.h);
+    const embeddedMarkerTextOffset = match ? averageHeight * Math.min(2.2, 0.55 + match[1].length * 0.35) : averageHeight * 0.9;
+    return {
+      ...candidate,
+      tag: "LI",
+      listMarker: {
+        marker: match?.[1] ?? "",
+        markerLeft: candidate.block.x,
+        textLeft: candidate.block.x + embeddedMarkerTextOffset
+      }
+    };
+  });
+}
+
+function mergeDoclingParagraphCandidates(items: LayoutModelItem[], page: PageResult, debug?: AccessibilityDetectionDebug): DetectionCandidate[] {
+  const rawCandidates = items.flatMap((item) => splitSuspiciousDoclingCandidate(doclingItemToCandidate(item, page), page));
+  if (debug) debug.doclingCandidates = rawCandidates.map(snapshotCandidate);
+
+  const regionCandidates = assignHeuristicRegions(classifyDoclingListCandidates(rawCandidates))
+    .filter((candidate) => candidate.tag === "LI" || !isTinyDecorativeText(candidate.block));
+  if (debug) debug.regionCandidates = regionCandidates.map(snapshotCandidate);
+
+  const listCandidates = mergeHeuristicListCandidates(regionCandidates, debug);
+  const verticalMerged: DetectionCandidate[] = [];
+  for (const candidate of [...listCandidates].sort((a, b) => (a.block.x - b.block.x) || (a.block.y - b.block.y))) {
+    const previous = verticalMerged[verticalMerged.length - 1];
+    const paragraphReason = previous ? paragraphMergeBlockReason(previous, candidate) : "first-candidate";
+    if (previous) recordMergeDecision(debug, "docling-paragraph", previous, candidate, paragraphReason === null, paragraphReason ?? "docling-paragraph-merge");
+    if (previous && paragraphReason === null) {
+      verticalMerged[verticalMerged.length - 1] = mergeCandidatePair(previous, candidate);
     } else {
-      merged.push(item);
+      verticalMerged.push(candidate);
     }
   }
-  if (debug) debug.doclingMergedCandidates = merged.map((item) => snapshotModelItem(item, page));
+
+  const merged = verticalMerged.sort((a, b) => (a.block.y - b.block.y) || (a.block.x - b.block.x));
+  if (debug) debug.doclingMergedCandidates = merged.map(snapshotCandidate);
   return merged;
 }
 
 function tagsFromDoclingItems(page: PageResult, items: LayoutModelItem[], debug?: AccessibilityDetectionDebug): AccessibilityTag[] {
   const now = new Date().toISOString();
-  const pageItems = mergeDoclingParagraphItems(items
+  const pageItems = mergeDoclingParagraphCandidates(items
     .filter((item) => item.pageIndex === page.pageIndex)
     .filter((item) => item.bbox.w > 1 && item.bbox.h > 1)
     .sort((a, b) => (a.order - b.order) || (a.bbox.y - b.bbox.y) || (a.bbox.x - b.bbox.x)), page, debug);
 
-  return pageItems.map((item, index) => {
-    const text = (item.text ?? "").replace(/\s+/g, " ").trim();
-    const tag = mapDoclingLabel(item.label, text);
-    const confidence = confidenceFromModel(item, tag);
+  return pageItems.map((candidate, index) => {
+    const { block, tag, confidence, text } = candidate;
     return {
       id: randomUUID(),
       pageIndex: page.pageIndex,
       tag,
-      bbox: scaleModelBox(item, page),
+      bbox: {
+        x: Number(block.x.toFixed(2)),
+        y: Number(block.y.toFixed(2)),
+        w: Number(block.w.toFixed(2)),
+        h: Number(block.h.toFixed(2))
+      },
       readingOrder: index + 1,
       confidence,
       source: "auto-detection",
       status: confidence >= 0.82 && tag !== "Figure" && tag !== "Formula" && tag !== "Table" ? "suggested" : "needs-review",
-      actualText: tag === "Formula" && text ? text : undefined,
+      actualText: tag !== "Figure" && tag !== "Artifact" && text ? text : undefined,
       altText: tag === "Figure" && text ? text : undefined,
       createdAt: now,
       updatedAt: now

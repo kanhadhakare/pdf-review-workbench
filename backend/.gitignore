@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .venv/
+.docling-venv/
 storage/*
 !storage/jobs/
 !storage/uploads/
@@ -10,3 +11,4 @@ storage/uploads/*
 !storage/uploads/.gitkeep
 .python311/*
 tools/target/*
+    

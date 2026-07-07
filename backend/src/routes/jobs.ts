@@ -17,6 +17,7 @@ import { importArchiveBook } from "../services/archiveBookService.js";
 import { getAccessibilityMap, getAccessibilityPage, saveAccessibilityPage } from "../services/accessibilityStore.js";
 import { detectAccessibilityTagsForJob, detectAccessibilityTagsForPage } from "../services/accessibilityDetectionService.js";
 import { validateAccessibilityMap } from "../services/accessibilityValidationService.js";
+import { exportTaggedPdf } from "../services/accessibilityPdfExportService.js";
 
 const upload = multer({ storage: multer.memoryStorage() });
 const archiveUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 250 * 1024 * 1024 } });
@@ -282,10 +283,17 @@ jobsRouter.post("/:id/accessibility/validate", async (req, res) => {
   }
 });
 
-jobsRouter.post("/:id/accessibility/export-pdf", async (_req, res) => {
-  res.status(501).json({
-    message: "Tagged PDF export is intentionally not implemented yet. Choose a PDF tag-writing engine first: PDFix/Apryse for production speed, or a custom pikepdf/qpdf writer as a separate R&D phase."
-  });
+jobsRouter.post("/:id/accessibility/export-pdf", async (req, res) => {
+  const job = await jobStore.getJob(req.params.id);
+  if (!job) {
+    res.status(404).json({ message: "Job not found" });
+    return;
+  }
+  try {
+    res.json(await exportTaggedPdf(job));
+  } catch (error) {
+    res.status(500).json({ message: error instanceof Error ? error.message : "Unable to export tagged PDF" });
+  }
 });
 
 jobsRouter.post("/", upload.single("file"), async (req, res) => {
